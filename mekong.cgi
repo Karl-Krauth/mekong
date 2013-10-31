@@ -43,13 +43,15 @@ sub cgi_main {
 
 # simple login form without authentication  
 sub login_form {
-    return <<eof;
-    <p>
-    <form>
-        login: <input type="text" name="login" size=16></input>
-    </form>
-    <p>
-eof
+    my $str = "";
+
+    open(F, "<", "login_form.html");
+    #read in entire content of login_form
+    local $/;
+    $str = <F>;
+    close(F);
+
+    return $str;
 }
 
 # simple search form
