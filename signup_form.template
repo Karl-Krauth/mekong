@@ -1,0 +1,12 @@
+    <h4><TMPL_VAR NAME=ERROR></h4>
+    <form accept-charset="UTF-8" action="" method="post">
+        <input class="span3" name="username" placeholder="Username" type="text">
+        <input class="span3" name="password" placeholder="Password" type="password"> 
+        <input class="span3" name="fullname" placeholder="Full Name" type="fullname"> 
+        <input class="span3" name="street" placeholder="Street" type="street">
+        <input class="span3" name="city" placeholder="City/Suburb" type="city">
+        <input class="span3" name="state" placeholder="State" type="state">
+        <input class="span3" name="postcode" placeholder="Postcode" type="postcode">
+        <input class="span3" name="email" placeholder="Email" type="email">
+        <button class="btn btn-success" type="submit" name="action" value="registered">Sign up</button>
+    </form>

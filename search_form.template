@@ -1,0 +1,6 @@
+    <p> 
+        <form> 
+            search: <input type="text" name="search_terms" size=60></input> 
+        </form> 
+    <p> 
+

@@ -7,7 +7,7 @@ use warnings;
 use CGI qw/:all/;
 use HTML::Template;
 use Switch;
-
+use autodie;
 
 $debug = 0;
 $| = 1;
@@ -40,10 +40,11 @@ sub cgi_main {
     }
     
     switch($action) {
-        case "login"     {$page = check_user(\%template_variables)}
-        case "signup"    {$page = signup_form(\%template_variables)}
-        case "search"    {$page = search_results(\%template_variables)}
-        else             {$page = login_form(\%template_variables)}
+        case "login"      {$page = check_user(\%template_variables)}
+        case "signup"     {$page = signup_form(\%template_variables, 0)}
+        case "registered" {$page = register(\%template_variables)}
+        case "search"     {$page = search_results(\%template_variables)}
+        else              {$page = login_form(\%template_variables, 0)}
     }
 
     my $template = HTML::Template->new(filename => "$page.template");    
@@ -52,49 +53,99 @@ sub cgi_main {
     print page_trailer();
 }
 
-# simple login form  
 sub login_form {
-    ($template_variables) = @_;
+    (my $template_variables, $error) = @_;
+
+    if ($error) {
+        $$template_variables{ERROR} = $last_error;
+    }
 
     return "login_form";
 }
 
-#check if a given username/password exist and returns appropriate page
-sub check_user {
-    ($template_variables) = @_;
-    $username = param('username');
-    $password = param('password');
+sub register {
+    (my $template_variables) = @_;
+
+    my $username = param('username');
+    my $password = param('password');
+    my $notComplete = 0;
+
+    my @userDetails = (param('fullname'), param('street'), param('city'), 
+                       param('state'), param('postcode'), param('email'));
 
     if (not legal_login($username)) {
-       return login_error($template_variables);
+        return signup_form($template_variables, 1);
     } elsif (not legal_password($password)) {
-       return login_error($template_variables);
-    } elsif (not authenticate($username, $password)) {
-        return login_error($template_variables);
+        return signup_form($template_variables, 1);
     } else {
-        return login_success($template_variables);
+        foreach my $detail (@userDetails) {
+            if ($detail eq "") {
+                $notComplete = 1;
+            }
+        }
+         
+        if ($notComplete) {
+            $last_error = "Registration form is incomplete.";
+            return signup_form($template_variable, 1);
+        } elsif (-e "$users_dir/$username") {
+            $last_error = "Username already exists.";
+            return signup_form($template_variable, 1);
+        } else {
+            addUser($username, $password, @userDetails);            
+            return "search_page";
+        }
     }
 }
 
-sub login_error {
-    ($template_variables) = @_;
-    $$template_variables{ERROR} = $last_error;    
-    return "login_error";
+sub addUser {
+    my @userDetails = @_;
+    my $i = 0;
+
+    if (not -d $users_dir) {
+        mkdir($users_dir);
+    }
+
+    open(USER, ">", "$users_dir/$userDetails[0]");
+
+    foreach $field (qw(login password name street city state postcode email)) {
+        print(USER "$field=$userDetails[$i]\n");
+        $i++;
+    }
+
+    close(USER);
 }
 
-sub login_success {
+sub signup_form {
+    (my $template_variables, my $error) = @_;
+    
+    if ($error) {
+        $$template_variables{ERROR} = $last_error;
+    }
 
+    return "signup_form";
+}
+
+#check if a given username/password exist and returns appropriate page
+sub check_user {
+    (my $template_variables) = @_;
+    my $username = param('username');
+    my $password = param('password');
+
+    if (not legal_login($username)) {
+        return login_form($template_variables, 1);
+    } elsif (not legal_password($password)) {
+        return login_form($template_variables, 1);
+    } elsif (not authenticate($username, $password)) {
+        return login_form($template_variables, 1);
+    } else {
+        return search_form($template_variables);
+    }
 }
 
 # simple search form
 sub search_form {
-    return <<eof;
-    <p>
-    <form>
-        search: <input type="text" name="search_terms" size=60></input>
-    </form>
-    <p>
-eof
+    $template_variables = @_;
+    return "search_form";
 }
 
 # ascii display of search results
@@ -124,10 +175,10 @@ Content-Type: text/html
 <head>
 <title>mekong.com.au</title>
 <link
-href="//netdna.bootstrapcdn.com/twitter-bootstrap/2.3.1/css/bootstrap-combined.min.css"
+href="//netdna.bootstrapcdn.com/bootstrap/3.0.1/css/bootstrap.min.css"
 rel="stylesheet">
 <script
-src="//netdna.bootstrapcdn.com/twitter-bootstrap/2.3.1/js/bootstrap.min.js"></script>
+src="//netdna.bootstrapcdn.com/bootstrap/3.0.1/js/bootstrap.min.js"></script>
 </head>
 <body>
 <p>
@@ -277,10 +328,12 @@ sub authenticate {
     our (%user_details, $last_error);
     
     return 0 if !legal_login($login);
-    if (!open(USER, "$users_dir/$login")) {
+    if (not -e "$users_dir/$login") {
         $last_error = "User '$login' does not exist.";
         return 0;
     }
+
+    open(USER, "$users_dir/$login");
     my %details =();
     while (<USER>) {
         next if !/^([^=]+)=(.*)/;

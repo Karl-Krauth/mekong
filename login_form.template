@@ -1,3 +1,4 @@
+<h4><TMPL_VAR NAME=ERROR></h4>
 <div class="span3 well">
     <legend>Welcome to Mekong!</legend>
     <form accept-charset="UTF-8" action="" method="post">
