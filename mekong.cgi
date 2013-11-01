@@ -6,10 +6,31 @@
 use warnings;
 use CGI qw/:all/;
 use HTML::Template;
+use strict;
 use Switch;
 use autodie;
 
-$debug = 0;
+our $base_dir = ".";
+our $books_file = "$base_dir/books.json";
+our $orders_dir = "$base_dir/orders";
+our $baskets_dir = "$base_dir/baskets";
+our $users_dir = "$base_dir/users";
+our $last_error = "";
+our %user_details = ();
+our %book_details = ();
+our %attribute_names = ();
+our @new_account_rows = (
+          'login|Login:|10',
+          'password|Password:|10',
+          'name|Full Name:|50',
+          'street|Street:|50',
+          'city|City/Suburb:|25',
+          'state|State:|25',
+          'postcode|Postcode:|25',
+          'email|Email Address:|35'
+          );
+
+our $debug = 0;
 $| = 1;
 
 if (!@ARGV) {
@@ -54,7 +75,7 @@ sub cgi_main {
 }
 
 sub login_form {
-    (my $template_variables, $error) = @_;
+    (my $template_variables, my $error) = @_;
 
     if ($error) {
         $$template_variables{ERROR} = $last_error;
@@ -86,10 +107,10 @@ sub register {
          
         if ($notComplete) {
             $last_error = "Registration form is incomplete.";
-            return signup_form($template_variable, 1);
+            return signup_form($template_variables, 1);
         } elsif (-e "$users_dir/$username") {
             $last_error = "Username already exists.";
-            return signup_form($template_variable, 1);
+            return signup_form($template_variables, 1);
         } else {
             addUser($username, $password, @userDetails);            
             return "search_page";
@@ -100,18 +121,18 @@ sub register {
 sub addUser {
     my @userDetails = @_;
     my $i = 0;
-
+    
     if (not -d $users_dir) {
         mkdir($users_dir);
     }
 
     open(USER, ">", "$users_dir/$userDetails[0]");
-
-    foreach $field (qw(login password name street city state postcode email)) {
+    
+    foreach my $field (qw(login password name street city state postcode email)) {
         print(USER "$field=$userDetails[$i]\n");
         $i++;
     }
-
+    
     close(USER);
 }
 
@@ -144,7 +165,7 @@ sub check_user {
 
 # simple search form
 sub search_form {
-    $template_variables = @_;
+    my $template_variables = @_;
     return "search_form";
 }
 
@@ -205,7 +226,7 @@ eof
 #
 sub debugging_info() {
     my $params = "";
-    foreach $p (param()) {
+    foreach my $p (param()) {
         $params .= "param($p)=".param($p)."\n"
     }
 
@@ -309,8 +330,8 @@ sub legal_expiry_date {
 sub total_books {
     my @isbns = @_;
     our %book_details;
-    $total = 0;
-    foreach $isbn (@isbns) {
+    my $total = 0;
+    foreach my $isbn (@isbns) {
         die "Internal error: unknown isbn $isbn  in total_books" if
 !$book_details{$isbn}; # shouldn't happen
         my $price = $book_details{$isbn}{price};
@@ -340,7 +361,7 @@ sub authenticate {
         $details{$1} = $2;
     }
     close(USER);
-    foreach $field (qw(name street city state postcode password)) {
+    foreach my $field (qw(name street city state postcode password)) {
         if (!defined $details{$field}) {
             $last_error = "Incomplete user file: field $field missing";
             return 0;
@@ -407,14 +428,14 @@ sub search_books1 {
     our %book_details;
     print STDERR "search_books1(@search_terms)\n" if $debug;
     my @unknown_fields = ();
-    foreach $search_term (@search_terms) {
+    foreach my $search_term (@search_terms) {
         push @unknown_fields, "'$1'" if $search_term =~ /([^:]+):/ &&
 !$attribute_names{$1};
     }
     printf STDERR "$0: warning unknown field%s: @unknown_fields\n",
 (@unknown_fields > 1 ? 's' : '') if @unknown_fields;
     my @matches = ();
-    BOOK: foreach $isbn (sort keys %book_details) {
+    BOOK: foreach my $isbn (sort keys %book_details) {
         my $n_matches = 0;
         if (!$book_details{$isbn}{'=default_search='}) {
             $book_details{$isbn}{'=default_search='} =
@@ -423,7 +444,7 @@ sub search_books1 {
 '".$book_details{$isbn}{'=default_search='}."'\n" if $debug;
         }
         print STDERR "search_terms=@search_terms\n" if $debug > 1;
-        foreach $search_term (@search_terms) {
+        foreach my $search_term (@search_terms) {
             my $search_type = "=default_search=";
             my $term = $search_term;
             if ($search_term =~ /([^:]+):(.*)/) {
@@ -498,7 +519,7 @@ sub delete_basket {
     my @isbns = read_basket($login);
     open F, ">$baskets_dir/$login" or die "Can not open
 $baskets_dir/$login: $!";
-    foreach $isbn (@isbns) {
+    foreach my $isbn (@isbns) {
         if ($isbn eq $delete_isbn) {
             $delete_isbn = "";
             next;
@@ -561,7 +582,7 @@ $orders_dir/$login:$! \n";
 sub login_to_orders {
     my ($login) = @_;
     open F, "$orders_dir/$login" or return ();
-    @order_numbers = <F>;
+    my @order_numbers = <F>;
     close(F);
     chomp(@order_numbers);
     return @order_numbers;
@@ -575,7 +596,7 @@ sub read_order {
     my ($order_number) = @_;
     open F, "$orders_dir/$order_number" or warn "Can not open
 $orders_dir/$order_number:$! \n";
-    @lines = <F>;
+    my @lines = <F>;
     close(F);
     chomp @lines;
     foreach (@lines[0..2]) {s/.*=//};
@@ -587,10 +608,11 @@ $orders_dir/$order_number:$! \n";
 ### Your do not need to use these funtions
 ###
 
+our $argument;
 sub console_main {
     set_global_variables();
     $debug = 1;
-    foreach $dir ($orders_dir,$baskets_dir,$users_dir) {
+    foreach my $dir ($orders_dir,$baskets_dir,$users_dir) {
         if (! -d $dir) {
             print "Creating $dir\n";
             mkdir($dir, 0777) or die("Can not create $dir: $!");
@@ -606,10 +628,10 @@ checkout orders quit);
     while (1) {
         $last_error = "";
         print "> ";
-        $line = <STDIN> || last;
+        my $line = <STDIN> || last;
         $line =~ s/^\s*>\s*//;
         $line =~ /^\s*(\S+)\s*(.*)/ || next;
-        ($command, $argument) = ($1, $2);
+        (my $command, $argument) = ($1, $2);
         $command =~ tr/A-Z/a-z/;
         $argument = "" if !defined $argument;
         $argument =~ s/\s*$//;
@@ -703,7 +725,7 @@ sub new_account_command {
         print "Can not create user file $users_dir/$login: $!";
         return "";
     }
-    foreach $description (@new_account_rows) {
+    foreach my $description (@new_account_rows) {
         my ($name, $label)  = split /\|/, $description;
         next if $name eq "login";
         my $value;
@@ -757,7 +779,7 @@ sub details_command {
         return;
     }
     print_books($isbn);
-    foreach $attribute (sort keys %{$book_details{$isbn}}) {
+    foreach my $attribute (sort keys %{$book_details{$isbn}}) {
         next if $attribute =~
 /Image|=|^(|price|title|authors|productdescription)$/;
         print "$attribute: $book_details{$isbn}{$attribute}\n";
@@ -850,7 +872,7 @@ $user_details{postcode}\n\n";
 sub orders_command {
     my ($login) = @_;
     print "\n";
-    foreach $order (login_to_orders($login)) {
+    foreach my $order (login_to_orders($login)) {
         my ($order_time, $credit_card_number, $expiry_date, @isbns) =
 read_order($order);
         $order_time = localtime($order_time);
@@ -872,7 +894,7 @@ sub get_book_descriptions {
     my @isbns = @_;
     my $descriptions = "";
     our %book_details;
-    foreach $isbn (@isbns) {
+    foreach my $isbn (@isbns) {
         die "Internal error: unknown isbn $isbn in print_books\n" if
 !$book_details{$isbn}; # shouldn't happen
         my $title = $book_details{$isbn}{title} || "";
