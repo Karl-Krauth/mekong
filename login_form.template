@@ -1,0 +1,9 @@
+<div class="span3 well">
+    <legend>Welcome to Mekong!</legend>
+    <form accept-charset="UTF-8" action="" method="post">
+        <input class="span3" name="username" placeholder="Username" type="text">
+        <input class="span3" name="password" placeholder="Password" type="password"> 
+        <button class="btn btn-success" type="submit" name="action" value="login">Login</button>
+        <button class="btn btn-success" type="submit" name="action" value="signup">Sign up</button>
+    </form>
+</div>

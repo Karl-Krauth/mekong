@@ -5,6 +5,9 @@
 
 use warnings;
 use CGI qw/:all/;
+use HTML::Template;
+use Switch;
+
 
 $debug = 0;
 $| = 1;
@@ -27,31 +30,60 @@ sub cgi_main {
     set_global_variables();
     read_books($books_file);
 
-    my $login = param('login');
-    my $search_terms = param('search_terms');
+    my $page;
+    my %template_variables = ();
     
-    if (defined $search_terms) {
-        print search_results($search_terms);
-    } elsif (defined $login) {
-        print search_form();
-    } else {
-        print login_form();
+    my $action = param('action');
+
+    if (not defined $action) {
+        $action = "";
     }
     
+    switch($action) {
+        case "login"     {$page = check_user(\%template_variables)}
+        case "signup"    {$page = signup_form(\%template_variables)}
+        case "search"    {$page = search_results(\%template_variables)}
+        else             {$page = login_form(\%template_variables)}
+    }
+
+    my $template = HTML::Template->new(filename => "$page.template");    
+    $template->param(%template_variables);
+    print $template->output;
     print page_trailer();
 }
 
-# simple login form without authentication  
+# simple login form  
 sub login_form {
-    my $str = "";
+    ($template_variables) = @_;
 
-    open(F, "<", "login_form.html");
-    #read in entire content of login_form
-    local $/;
-    $str = <F>;
-    close(F);
+    return "login_form";
+}
 
-    return $str;
+#check if a given username/password exist and returns appropriate page
+sub check_user {
+    ($template_variables) = @_;
+    $username = param('username');
+    $password = param('password');
+
+    if (not legal_login($username)) {
+       return login_error($template_variables);
+    } elsif (not legal_password($password)) {
+       return login_error($template_variables);
+    } elsif (not authenticate($username, $password)) {
+        return login_error($template_variables);
+    } else {
+        return login_success($template_variables);
+    }
+}
+
+sub login_error {
+    ($template_variables) = @_;
+    $$template_variables{ERROR} = $last_error;    
+    return "login_error";
+}
+
+sub login_success {
+
 }
 
 # simple search form
@@ -154,7 +186,7 @@ sub legal_login {
 
     if ($login !~ /^[a-zA-Z][a-zA-Z0-9]*$/) {
         $last_error = "Invalid login '$login': logins must start with a
-letter and contain only letters and digits.";
+                       letter and contain only letters and digits.";
         return 0;
     }
     if (length $login < 3 || length $login > 8) {
@@ -174,11 +206,13 @@ sub legal_password {
         $last_error = "Invalid password: password can not contain white space.";
         return 0;
     }
+
     if (length $password < 5) {
         $last_error = "Invalid password: passwords must contain at least 5
-characters.";
+                       characters.";
         return 0;
     }
+
     return 1;
 }
 
