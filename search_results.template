@@ -1,0 +1,5 @@
+<table border = "1">
+    <tr>
+        <TMPL_VAR NAME=TABLE_ROWS>
+    </tr>
+</table>

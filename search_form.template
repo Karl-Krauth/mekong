@@ -1,6 +1,7 @@
-    <p> 
-        <form> 
-            search: <input type="text" name="search_terms" size=60></input> 
-        </form> 
-    <p> 
-
+<div class="span3 well">
+    <legend>Welcome to Mekong!</legend>
+    <form accept-charset="UTF-8" action="" method="post">
+        <input class="span3" name="searchres" placeholder="type your search" type="text">
+        <button class="btn btn-success" type="submit" name="action" value="search">Search</button>
+    </form>
+</div>

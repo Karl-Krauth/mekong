@@ -4,12 +4,15 @@
 # http://www.cse.unsw.edu.au/~cs2041/assignments/mekong/
 
 use warnings;
+use strict;
 use CGI qw/:all/;
 use HTML::Template;
-use strict;
 use Switch;
 use autodie;
 
+######################################
+###########global variables###########
+######################################
 our $base_dir = ".";
 our $books_file = "$base_dir/books.json";
 our $orders_dir = "$base_dir/orders";
@@ -32,6 +35,7 @@ our @new_account_rows = (
 
 our $debug = 0;
 $| = 1;
+######################################
 
 if (!@ARGV) {
     # run as a CGI script
@@ -113,7 +117,7 @@ sub register {
             return signup_form($template_variables, 1);
         } else {
             addUser($username, $password, @userDetails);            
-            return "search_page";
+            return search_form($template_variables);
         }
     }
 }
@@ -171,16 +175,29 @@ sub search_form {
 
 # ascii display of search results
 sub search_results {
-    my ($search_terms) = @_;
+    (my $template_variables) = @_;
+
+    my $search_terms = param('searchres');
     my @matching_isbns = search_books($search_terms);
-    my $descriptions = get_book_descriptions(@matching_isbns);
+    my @table_rows;
+    
+    foreach my $isbn (@matching_isbns) {
+        push(@table_rows, makeRow($isbn));
+    }
+
+    $$template_variables{TABLE_ROWS} = "@table_rows";
+    return "search_results";
+}
+
+sub makeRow {
+    (my $isbn) = @_;
     return <<eof;
-    <p>$search_terms
-    <p>@matching_isbns
-    <pre>
-        $descriptions
-    </pre>
-    <p>
+<tr>
+    <td><img src="$book_details{$isbn}{smallimageurl}" /></td>
+    <td><p>$book_details{$isbn}{title}</p>
+        <p>$book_details{$isbn}{authors}</p></td>
+    <td>$book_details{$isbn}{price}</td>
+</tr>
 eof
 }
 
@@ -241,14 +258,11 @@ eof
 }
 
 
-
-
-###
-### Below here are utility functions
-### Most are unused by the code above, but you will 
-### need to use these functions (or write your own equivalent functions)
-### 
-###
+##############################
+##############################
+##### ANDREW TAYLOR CODE #####
+##############################
+##############################
 
 # return true if specified string can be used as a login
 
@@ -376,8 +390,7 @@ sub authenticate {
 }
 
 # read contents of files in the books dir into the hash book
-# a list of field names in the order specified in the file
- 
+# a list of field names in the order specified in the file 
 sub read_books {
     my ($books_file) = @_;
     our %book_details;
