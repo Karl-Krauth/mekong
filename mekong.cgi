@@ -6,6 +6,7 @@
 use warnings;
 use strict;
 use CGI qw/:all/;
+use CGI::Cookie;
 use HTML::Template;
 use Switch;
 use autodie;
@@ -22,6 +23,8 @@ our $last_error = "";
 our %user_details = ();
 our %book_details = ();
 our %attribute_names = ();
+our $loggedIn = 0;
+our $id;
 our @new_account_rows = (
           'login|Login:|10',
           'password|Password:|10',
@@ -32,7 +35,6 @@ our @new_account_rows = (
           'postcode|Postcode:|25',
           'email|Email Address:|35'
           );
-
 our $debug = 0;
 $| = 1;
 ######################################
@@ -50,36 +52,93 @@ exit 0;
 # to the search screen and it doesn't format the
 # search results at all
 sub cgi_main {
-    print page_header();
+    print "Content-Type: text/html\n";
     
     set_global_variables();
     read_books($books_file);
 
     my $page;
     my %template_variables = ();
-    
     my $action = param('action');
+    my %cookies = CGI::Cookie->fetch();
+    
+    if (legalCookie($cookies{ID})) {
+        $loggedIn = 1;
+        my @arr = split(/:/, $cookies{ID}->value);
+        $id = shift(@arr);
+    }
 
     if (not defined $action) {
-        $action = "";
-    }
-    
+        if ($loggedIn) {
+            $action = "home";
+        } else {
+            $action = "";
+        }
+    } 
+         
     switch($action) {
         case "login"      {$page = check_user(\%template_variables)}
         case "signup"     {$page = signup_form(\%template_variables, 0)}
         case "registered" {$page = register(\%template_variables)}
         case "search"     {$page = search_results(\%template_variables)}
+        case "home"       {$page = search_form(\%template_variables)}
+        case "log"        {$page = loginOut(\%template_variables)}
+        case "basket"     {$page = basket_page(\%template_variables)}
         else              {$page = login_form(\%template_variables, 0)}
     }
 
+    print "\n";
+    print page_header($action);
     my $template = HTML::Template->new(filename => "$page.template");    
     $template->param(%template_variables);
     print $template->output;
+    print $loggedIn;
     print page_trailer();
+}
+
+sub loginOut {
+    (my $template_variables) = @_;
+
+    if ($loggedIn) {
+        my $cookie = CGI::Cookie->new(-name=>'ID', -value=>"");
+        $cookie->bake();
+    }
+    return "login_form";
+}
+
+sub legalCookie {
+    (my $cookie) = @_;
+    my @arr;
+
+    if (not defined $cookie or not defined $cookie->value or $cookie->value eq "") {
+        return 0;
+    }
+
+    @arr = split(/:/, $cookie->value);
+    if (not legal_login($arr[0])) {
+        return 0;
+    } elsif (not legal_password($arr[1])) {
+        return 0;
+    } elsif (not authenticate($arr[0], $arr[1])) {
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
+sub basket_page {
+    (my $template_variables) = @_;
+    
+        
+
 }
 
 sub login_form {
     (my $template_variables, my $error) = @_;
+
+    if ($loggedIn) {
+        return search_form($template_variables);
+    }
 
     if ($error) {
         $$template_variables{ERROR} = $last_error;
@@ -90,6 +149,10 @@ sub login_form {
 
 sub register {
     (my $template_variables) = @_;
+
+    if ($loggedIn) {
+        return search_form($template_variables);
+    }
 
     my $username = param('username');
     my $password = param('password');
@@ -153,6 +216,11 @@ sub signup_form {
 #check if a given username/password exist and returns appropriate page
 sub check_user {
     (my $template_variables) = @_;
+
+    if ($loggedIn) {
+        return search_form($template_variables);
+    }
+
     my $username = param('username');
     my $password = param('password');
 
@@ -163,6 +231,8 @@ sub check_user {
     } elsif (not authenticate($username, $password)) {
         return login_form($template_variables, 1);
     } else {
+        my $cookie = CGI::Cookie->new(-name=>'ID', -value=>"$username:$password");
+        $cookie->bake();
         return search_form($template_variables);
     }
 }
@@ -191,6 +261,10 @@ sub search_results {
 
 sub makeRow {
     (my $isbn) = @_;
+    if (not defined $book_details{$isbn}{smallimageurl}) {
+        $book_details{$isbn}{smallimageurl} = "";
+    } 
+
     return <<eof;
 <tr>
     <td><img src="$book_details{$isbn}{smallimageurl}" /></td>
@@ -205,23 +279,17 @@ eof
 # HTML at top of every screen
 #
 sub page_header() {
-    return <<eof;
-Content-Type: text/html
+    (my $action) = @_;
+    my %template_variables;
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<title>mekong.com.au</title>
-<link
-href="//netdna.bootstrapcdn.com/bootstrap/3.0.1/css/bootstrap.min.css"
-rel="stylesheet">
-<script
-src="//netdna.bootstrapcdn.com/bootstrap/3.0.1/js/bootstrap.min.js"></script>
-</head>
-<body>
-<p>
-<div class="container">
-eof
+    if($loggedIn) {
+        $template_variables{LOG} = "Logout";
+    } else {
+        $template_variables{LOG} = "Login";
+    }
+    my $template = HTML::Template->new(filename => "header.template");    
+    $template->param(%template_variables);
+    return $template->output;
 }
 
 #
