@@ -84,10 +84,12 @@ sub cgi_main {
         case "home"          {$page = search_form(\%template_variables, 0)}
         case "log"           {$page = login_out(\%template_variables)}
         case "basket"        {$page = basket_page(\%template_variables)}
-        case /^details /      {$page = details_page(\%template_variables, $action)}
+        case /^details /     {$page = details_page(\%template_variables, $action)}
         case /^add_([^ ]*) / {$page = add_book(\%template_variables, $action)}
-        case /^drop /        {$page = drop_book(\%template_variables, $action)}              
-        else                 {$page = login_form(\%template_variables, 0)}
+        case /^drop /        {$page = drop_book(\%template_variables, $action)}
+        case "forgot"        {$page = forgot_password(\%template_variables)}
+        case "recover"       {$page = recover_password(\%template_variables, 0)}             
+        else                 {$page = noAction(\%template_variables)}
     }
 
     print "\n";
@@ -97,6 +99,62 @@ sub cgi_main {
     print $template->output;
     print $loggedIn;
     print page_trailer();
+}
+
+sub recover_password{
+    my ($template_variables) = @_;
+    my $username = param('username');
+
+    if (not legal_login($username) or not -e "$users_dir/$username") {
+        $last_error = "Invalid username.";
+        return forgot_password($template_variables, 1);
+    }    
+
+    #TODO email logic
+    return login_form($template_variables, 0);
+}
+
+sub forgot_password {
+    (my $template_variables, my $error) = @_;
+
+    if ($error) {
+        $$template_variables{ERROR} = $last_error;    
+    }
+
+    return "forgot_password";
+}
+
+sub change_password {
+
+}
+
+sub noAction {
+    (my $template_variables) = @_;
+    my $username; 
+    my $confNum;
+   
+    if (not defined $ENV{QUERY_STRING}) {
+        return login_form($template_variables, 0);
+    }
+
+    if ($ENV{QUERY_STRING} =~ /^id=(.*)&conf=([0-9]*)$/) {
+        $username = $1;
+        $confNum = $2;
+        if (legal_login($username) and -e "$users_dir/$username") {
+            if (not confirmed($username)) {
+                if (confirm_email($username, $confNum)) {
+                    $last_error = "email confirmed!";
+                    return login_form($template_variables, 1);   
+                }
+            }
+        }
+        $last_error = "invalid url";
+        return login_form($template_variables, 1);
+    } elsif (0) {
+
+    } else {
+        return login_form($template_variables, 0);
+    }
 }
 
 sub add_book {
@@ -309,12 +367,22 @@ sub addUser {
         mkdir($users_dir);
     }
 
+    my $email;
     open(USER, ">", "$users_dir/$userDetails[0]");
     
     foreach my $field (qw(login password name street city state postcode email)) {
+        if ($field eq "email") {
+            $email = $userDetails[$i];
+        } 
         print(USER "$field=$userDetails[$i]\n");
         $i++;
     }
+    
+    my $randVar = int(rand(10000000));
+    print(USER "conf=" . $randVar . "\n");
+    
+    `echo "$ENV{REDIRECT_SCRIPT_URI}?name=$userDetails[0]&id=$randVar" 
+    | mutt -s 'Mekong Registration' -- "$email"`;
     
     close(USER);
 }
@@ -327,6 +395,51 @@ sub signup_form {
     }
 
     return "signup_form";
+}
+
+
+sub confirm_email {
+    (my $username, my $confirmNum) = @_;
+    my $str = "";
+    my $retVal = 1;
+
+    open(USER, "<", "$users_dir/$username");
+    
+    while (my $line = <USER>) {
+        if ($line =~ /^conf=(.*)\n/) {
+            if ($1 == $confirmNum) {
+                $retVal = 1;
+            } else {
+                $retVal = 0;
+                $str .=  $line;
+            }
+        } else {
+            $str .= $line;
+        }
+    }
+
+    close(USER);
+    open(USER, ">", "$users_dir/$username");
+    
+    print(USER $str);
+
+    return $retVal;
+}
+
+sub confirmed {
+    (my $username) = @_;
+    my $retVal = 1;
+
+    open(USER, "<", "$users_dir/$username");
+    
+    while (my $line = <USER>) {
+        if ($line =~ /^conf=(.*)\n/) {
+            $retVal = 0;
+        }
+    }
+
+    close(USER);
+    return $retVal;
 }
 
 #check if a given username/password exist and returns appropriate page
@@ -346,6 +459,9 @@ sub check_user {
     } elsif (not legal_password($password)) {
         return login_form($template_variables, 1);
     } elsif (not authenticate($username, $password)) {
+        return login_form($template_variables, 1);
+    } elsif (not confirmed($username, -1)) {
+        $last_error = "Please confirm your email.";
         return login_form($template_variables, 1);
     } else {
         my $cookie = CGI::Cookie->new(-name=>'ID', -value=>"$username:$password");
