@@ -77,16 +77,17 @@ sub cgi_main {
     } 
     
     switch($action) {
-        case "login"             {$page = check_user(\%template_variables)}
-        case "signup"            {$page = signup_form(\%template_variables, 0)}
-        case "registered"        {$page = register(\%template_variables)}
-        case "search"            {$page = search_results(\%template_variables)}
-        case "home"              {$page = search_form(\%template_variables, 0)}
-        case "log"               {$page = login_out(\%template_variables)}
-        case "basket"            {$page = basket_page(\%template_variables)}
-        case /^add_([^ ]*) (.*)/ {$page = add_book(\%template_variables, $action)}
-        case /^drop (.*)/        {$page = drop_book(\%template_variables, $action)}              
-        else                     {$page = login_form(\%template_variables, 0)}
+        case "login"         {$page = check_user(\%template_variables)}
+        case "signup"        {$page = signup_form(\%template_variables, 0)}
+        case "registered"    {$page = register(\%template_variables)}
+        case "search"        {$page = search_results(\%template_variables)}
+        case "home"          {$page = search_form(\%template_variables, 0)}
+        case "log"           {$page = login_out(\%template_variables)}
+        case "basket"        {$page = basket_page(\%template_variables)}
+        case /^details /      {$page = details_page(\%template_variables, $action)}
+        case /^add_([^ ]*) / {$page = add_book(\%template_variables, $action)}
+        case /^drop /        {$page = drop_book(\%template_variables, $action)}              
+        else                 {$page = login_form(\%template_variables, 0)}
     }
 
     print "\n";
@@ -122,7 +123,7 @@ sub add_book {
         return search_results($template_variables);    
     } elsif ($prevPage eq "details") {
         add_basket($id, $isbn);
-        return details_page($template_variables, $isbn);
+        return details_page($template_variables, "details " . $isbn);
     } else {
         $last_error = "Invalid add request.";
         return search_form($template_variables, 1);
@@ -138,7 +139,7 @@ sub drop_book {
         $last_error = "Must be logged in to remove books.";
         return login_form($template_variables, 1); 
     } elsif (not legal_isbn($isbn)) {
-        $last_error = "Invalid add request.";
+        $last_error = "Invalid remove request.";
         return search_form($template_variables, 1);
     }
 
@@ -151,8 +152,33 @@ sub drop_book {
 }
 
 sub details_page {
-    (my $template_variables, my $isbn) = @_; 
-    #$$template_variables{} = ;    
+    (my $template_variables, my $action) = @_;
+
+    $action =~ /details (.*)/;
+    my $isbn = $1;
+ 
+    if (not legal_isbn($isbn)) {
+        $last_error = "Isbn is not valid.";
+        return search_form($template_variables, 1);
+    }
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+
+    $$template_variables{isbn} = $isbn;
+
+    my @fields = ("title", "productdescription", "mediumimageurl", "authors",
+               "binding", "catalog", "ean", "price", "publication_date",
+               "publisher", "releasedate", "salesrank", "year");
+
+    foreach my $field (@fields) {
+        if (defined $book_details{$isbn}{$field}) {
+            $$template_variables{$field} = $book_details{$isbn}{$field};
+        } else {
+            $$template_variables{$field} = "";
+        }
+    }
 
     return "details_page";
 }

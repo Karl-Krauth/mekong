@@ -1,0 +1,104 @@
+<center>
+    <h3><TMPL_VAR NAME="title"></h3>
+    <p><TMPL_VAR NAME="productdescription"></p>
+    <img src="<TMPL_VAR NAME="mediumimageurl">" />
+    <table>
+        <tr>
+            <td>
+                <b>Title:</b>
+            </td>
+            <td>
+                <TMPL_VAR NAME="title">
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <b>ISBN:</b>
+            </td>
+            <td>
+                <TMPL_VAR NAME="isbn">
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <b>Authors:</b>
+            </td>
+            <td>
+                <TMPL_VAR NAME="authors">
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <b>Binding:</b>
+            </td>
+            <td>
+                <TMPL_VAR NAME="binding">
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <b>Catalog:</b>
+            </td>
+            <td>
+                <TMPL_VAR NAME="catalog">
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <b>EAN:</b>
+            </td>
+            <td>
+                <TMPL_VAR NAME="ean">
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <b>Price:</b>
+            </td>
+            <td>
+                <TMPL_VAR NAME="price">
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <b>Publication Date:</b>
+            </td>
+            <td>
+                <TMPL_VAR NAME="publication_date">
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <b>Publisher:</b>
+            </td>
+            <td>
+                <TMPL_VAR NAME="publisher">
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <b>Release Date:</b>
+            </td>
+            <td>
+                <TMPL_VAR NAME="releasedate">
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <b>Sales Rank:</b>
+            </td>
+            <td>
+                <TMPL_VAR NAME="salesrank">
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <b>Year:</b>
+            </td>
+            <td>
+                <TMPL_VAR NAME="year">
+            </td>
+        </tr>
+    </table>
+
+</center>
