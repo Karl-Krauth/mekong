@@ -52,10 +52,9 @@ exit 0;
 # to the search screen and it doesn't format the
 # search results at all
 sub cgi_main {
-    print "Content-Type: text/html\n";
+    print "Content-Type: text/html\n\n";
     
     set_global_variables();
-    read_books($books_file);
 
     my $page;
     my %template_variables = ();
@@ -75,16 +74,17 @@ sub cgi_main {
             $action = "";
         }
     } 
-         
+    
     switch($action) {
-        case "login"      {$page = check_user(\%template_variables)}
-        case "signup"     {$page = signup_form(\%template_variables, 0)}
-        case "registered" {$page = register(\%template_variables)}
-        case "search"     {$page = search_results(\%template_variables)}
-        case "home"       {$page = search_form(\%template_variables)}
-        case "log"        {$page = loginOut(\%template_variables)}
-        case "basket"     {$page = basket_page(\%template_variables)}
-        else              {$page = login_form(\%template_variables, 0)}
+        case "login"             {$page = check_user(\%template_variables)}
+        case "signup"            {$page = signup_form(\%template_variables, 0)}
+        case "registered"        {$page = register(\%template_variables)}
+        case "search"            {$page = search_results(\%template_variables)}
+        case "home"              {$page = search_form(\%template_variables, 0)}
+        case "log"               {$page = login_out(\%template_variables)}
+        case "basket"            {$page = basket_page(\%template_variables)}
+        case /^add_([^ ]*) (.*)/ {$page = add_book(\%template_variables, $action)}
+        else                     {$page = login_form(\%template_variables, 0)}
     }
 
     print "\n";
@@ -96,13 +96,53 @@ sub cgi_main {
     print page_trailer();
 }
 
-sub loginOut {
+sub add_book {
+    (my $template_variables, my $action) = @_;
+
+    $action =~ /^add_([^ ]*) (.*)/;
+    my $prevPage = $1;
+    my $isbn = $2;
+
+    if (not $loggedIn) {
+        $last_error = "Must be logged in to add books.";
+        return login_form($template_variables, 1); 
+    } elsif (not defined $prevPage or not legal_isbn($isbn)) {
+        $last_error = "Invalid add request." . $prevPage;
+        return search_form($template_variables, 1);
+    }
+
+    if (not -d $baskets_dir) {
+        mkdir($baskets_dir);
+    }
+    
+    if ($prevPage eq "search") {
+        add_basket($id, $isbn);
+        return search_results($template_variables);    
+    } elsif ($prevPage eq "details") {
+        add_basket($id, $isbn);
+        return details_page($template_variables, $isbn);
+    } else {
+        $last_error = "Invalid add request.";
+        return search_form($template_variables, 1);
+    }
+}
+
+sub details_page {
+    (my $template_variables, my $isbn) = @_; 
+    #$$template_variables{} = ;    
+
+    return "details_page";
+}
+
+sub login_out {
     (my $template_variables) = @_;
 
     if ($loggedIn) {
         my $cookie = CGI::Cookie->new(-name=>'ID', -value=>"");
         $cookie->bake();
     }
+
+    $loggedIn = 0;
     return "login_form";
 }
 
@@ -128,16 +168,32 @@ sub legalCookie {
 
 sub basket_page {
     (my $template_variables) = @_;
+    my @isbns;
+    my @rows;
     
-        
+    if (not $loggedIn) {
+        $last_error = "Must be logged in to check basket.";
+        return login_form($template_variables, 1);
+    }
 
+    read_books($books_file);
+    @isbns = read_basket($id);
+ 
+    foreach my $isbn (@isbns) {
+        push(@rows, makeRow($isbn));        
+    }
+
+    $$template_variables{TABLE_ROWS} = "@rows";
+        
+    return "basket_page";
 }
 
 sub login_form {
     (my $template_variables, my $error) = @_;
 
     if ($loggedIn) {
-        return search_form($template_variables);
+        $last_error = "Already logged in.";
+        return search_form($template_variables, 1);
     }
 
     if ($error) {
@@ -151,7 +207,8 @@ sub register {
     (my $template_variables) = @_;
 
     if ($loggedIn) {
-        return search_form($template_variables);
+        $last_error = "Already logged in.";
+        return search_form($template_variables, 1);
     }
 
     my $username = param('username');
@@ -180,7 +237,7 @@ sub register {
             return signup_form($template_variables, 1);
         } else {
             addUser($username, $password, @userDetails);            
-            return search_form($template_variables);
+            return search_form($template_variables, 0);
         }
     }
 }
@@ -218,7 +275,8 @@ sub check_user {
     (my $template_variables) = @_;
 
     if ($loggedIn) {
-        return search_form($template_variables);
+        $last_error = "Already logged in.";
+        return search_form($template_variables, 1);
     }
 
     my $username = param('username');
@@ -233,26 +291,40 @@ sub check_user {
     } else {
         my $cookie = CGI::Cookie->new(-name=>'ID', -value=>"$username:$password");
         $cookie->bake();
-        return search_form($template_variables);
+        $loggedIn = 1;
+        return search_form($template_variables, 0);
     }
 }
 
 # simple search form
 sub search_form {
-    my $template_variables = @_;
+    (my $template_variables, my $error) = @_;
+    if ($error) {
+        $$template_variables{ERROR} = $last_error;
+    }
+
     return "search_form";
 }
 
-# ascii display of search results
+#display of search results
 sub search_results {
     (my $template_variables) = @_;
+    read_books($books_file);
 
     my $search_terms = param('searchres');
     my @matching_isbns = search_books($search_terms);
     my @table_rows;
-    
+    my $newRow;    
+
+    $$template_variables{SEARCH_TERMS} = $search_terms;
     foreach my $isbn (@matching_isbns) {
-        push(@table_rows, makeRow($isbn));
+        $newRow = makeRow($isbn);
+        $newRow .= <<eof;
+        <td><button class="btn" type="submit" name="action" value="add_search $isbn">Add</button><br>
+        <button class="btn" type="submit" name="action" value="details $isbn">Details</button><br></td>
+    </tr>
+eof
+        push(@table_rows, $newRow);
     }
 
     $$template_variables{TABLE_ROWS} = "@table_rows";
@@ -265,13 +337,16 @@ sub makeRow {
         $book_details{$isbn}{smallimageurl} = "";
     } 
 
+    if (not defined $book_details{$isbn}{authors}) {
+        $book_details{$isbn}{authors} = "";
+    }
+
     return <<eof;
-<tr>
-    <td><img src="$book_details{$isbn}{smallimageurl}" /></td>
-    <td><p>$book_details{$isbn}{title}</p>
-        <p>$book_details{$isbn}{authors}</p></td>
-    <td>$book_details{$isbn}{price}</td>
-</tr>
+    <tr>
+        <td><img src="$book_details{$isbn}{smallimageurl}" /></td>
+        <td><p>$book_details{$isbn}{title}</p>
+            <p>$book_details{$isbn}{authors}</p></td>
+        <td>$book_details{$isbn}{price}</td>
 eof
 }
 
