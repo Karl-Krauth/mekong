@@ -22,6 +22,7 @@ our $users_dir = "$base_dir/users";
 our $last_error = "";
 our %user_details = ();
 our %book_details = ();
+our $book_read = 0;
 our %attribute_names = ();
 our $loggedIn = 0;
 our $id;
@@ -84,6 +85,7 @@ sub cgi_main {
         case "log"               {$page = login_out(\%template_variables)}
         case "basket"            {$page = basket_page(\%template_variables)}
         case /^add_([^ ]*) (.*)/ {$page = add_book(\%template_variables, $action)}
+        case /^drop (.*)/        {$page = drop_book(\%template_variables, $action)}              
         else                     {$page = login_form(\%template_variables, 0)}
     }
 
@@ -107,7 +109,7 @@ sub add_book {
         $last_error = "Must be logged in to add books.";
         return login_form($template_variables, 1); 
     } elsif (not defined $prevPage or not legal_isbn($isbn)) {
-        $last_error = "Invalid add request." . $prevPage;
+        $last_error = "Invalid add request.";
         return search_form($template_variables, 1);
     }
 
@@ -125,6 +127,27 @@ sub add_book {
         $last_error = "Invalid add request.";
         return search_form($template_variables, 1);
     }
+}
+
+sub drop_book {
+    (my $template_variables, my $action) = @_;
+    $action =~ /^drop (.*)/;
+    my $isbn = $1;
+
+    if (not $loggedIn) {
+        $last_error = "Must be logged in to remove books.";
+        return login_form($template_variables, 1); 
+    } elsif (not legal_isbn($isbn)) {
+        $last_error = "Invalid add request.";
+        return search_form($template_variables, 1);
+    }
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+
+    delete_basket($id, $isbn);
+    return basket_page($template_variables);    
 }
 
 sub details_page {
@@ -175,16 +198,26 @@ sub basket_page {
         $last_error = "Must be logged in to check basket.";
         return login_form($template_variables, 1);
     }
+    
+    if (not $book_read) {
+        read_books($books_file);
+    }
 
-    read_books($books_file);
     @isbns = read_basket($id);
  
     foreach my $isbn (@isbns) {
-        push(@rows, makeRow($isbn));        
+        my $newRow = makeRow($isbn);
+        $newRow .= <<eof;
+        <td><button class="btn" type="submit" name="action" value="drop $isbn">Drop</button><br>
+        <button class="btn" type="submit" name="action" value="details $isbn">Details</button><br></td>
+    </tr>
+eof
+        push(@rows, $newRow);        
     }
 
-    $$template_variables{TABLE_ROWS} = "@rows";
-        
+    $$template_variables{TABLE_ROWS} = "@rows";    
+    $$template_variables{TOTAL_PRICE} = total_books(@isbns);
+    
     return "basket_page";
 }
 
@@ -309,7 +342,10 @@ sub search_form {
 #display of search results
 sub search_results {
     (my $template_variables) = @_;
-    read_books($books_file);
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
 
     my $search_terms = param('searchres');
     my @matching_isbns = search_books($search_terms);
@@ -566,6 +602,7 @@ sub read_books {
         }
     }
     close BOOKS;
+    $book_read = 1;
 }
 
 # return books matching search string
