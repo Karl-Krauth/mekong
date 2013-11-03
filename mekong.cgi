@@ -53,7 +53,7 @@ exit 0;
 # to the search screen and it doesn't format the
 # search results at all
 sub cgi_main {
-    print "Content-Type: text/html\n\n";
+    print "Content-Type: text/html\n";
     
     set_global_variables();
 
@@ -575,6 +575,7 @@ sub check_user {
 
     my $username = param('username');
     my $password = param('password');
+    my $remember = param('remember');
 
     if (not legal_login($username)) {
         return login_form($template_variables, 1);
@@ -586,9 +587,16 @@ sub check_user {
         $last_message = "Please confirm your email.";
         return login_form($template_variables, 1);
     } else {
-        my $cookie = CGI::Cookie->new(-name=>'ID', -value=>"$username:$password");
-        $cookie->bake();
         $loggedIn = 1;
+        my $cookie;
+        if ($remember) {
+            $cookie = CGI::Cookie->new(-name=>'ID', 
+                                          -value=>"$username:$password",
+                                          -expires=> '+3M');
+        } else {
+            $cookie = CGI::Cookie->new(-name=>'ID', -value=>"$username:$password");
+        }
+        $cookie->bake();
         return search_form($template_variables, 0);
     }
 }
