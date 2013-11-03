@@ -19,12 +19,15 @@ our $books_file = "$base_dir/books.json";
 our $orders_dir = "$base_dir/orders";
 our $baskets_dir = "$base_dir/baskets";
 our $users_dir = "$base_dir/users";
+#holds the last message to be displayed
 our $last_message = "";
 our %user_details = ();
 our %book_details = ();
+#holds whether book_details has been completed
 our $book_read = 0;
 our %attribute_names = ();
 our $loggedIn = 0;
+#id of person currently logged in
 our $id;
 our @new_account_rows = (
           'login|Login:|10',
@@ -49,9 +52,7 @@ if (!@ARGV) {
 }
 exit 0;
 
-# This is very simple CGI code that goes straight
-# to the search screen and it doesn't format the
-# search results at all
+
 sub cgi_main {
     print "Content-Type: text/html\n";
     
@@ -62,6 +63,7 @@ sub cgi_main {
     my $action = param('action');
     my %cookies = CGI::Cookie->fetch();
     
+    #appropriate initializations if logged in
     if (legalCookie($cookies{ID})) {
         $loggedIn = 1;
         my @arr = split(/:/, $cookies{ID}->value);
@@ -85,7 +87,7 @@ sub cgi_main {
         case "home"          {$page = search_form(\%template_variables, 0)}
         case "log"           {$page = login_out(\%template_variables)}
         case "basket"        {$page = basket_page(\%template_variables)}
-        case /^details /     {$page = details_page(\%template_variables, $action)}
+        case /^details /     {$page = details_page(\%template_variables, $action, 0)}
         case /^add_([^ ]*) / {$page = add_book(\%template_variables, $action)}
         case /^drop/        {$page = drop_book(\%template_variables, $action)}
         case "forgot"        {$page = forgot_password(\%template_variables)}
@@ -104,6 +106,47 @@ sub cgi_main {
     print page_trailer();
 }
 
+####################################
+######Page generation functions#####
+####################################
+#details of a particular book
+sub details_page {
+    (my $template_variables, my $action, $message) = @_;
+
+    $action =~ /details (.*)/;
+    my $isbn = $1;
+
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;
+    }
+ 
+    if (not legal_isbn($isbn)) {
+        $last_message = "Isbn is not valid.";
+        return search_form($template_variables, 1);
+    }
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+
+    $$template_variables{isbn} = $isbn;
+
+    my @fields = ("title", "productdescription", "mediumimageurl", "authors",
+               "binding", "catalog", "ean", "price", "publication_date",
+               "publisher", "releasedate", "salesrank", "year");
+
+    foreach my $field (@fields) {
+        if (defined $book_details{$isbn}{$field}) {
+            $$template_variables{$field} = $book_details{$isbn}{$field};
+        } else {
+            $$template_variables{$field} = "";
+        }
+    }
+
+    return "details_page";
+}
+
+#list of past orders
 sub orders_page {
     (my $template_variables) = @_;
     
@@ -126,6 +169,640 @@ sub orders_page {
     return "orders_page";
 }
 
+#simple signup form
+sub signup_form {
+    (my $template_variables, my $message) = @_;
+    
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;
+    }
+
+    return "signup_form";
+}
+
+
+#display of search results with dynamically generated table
+sub search_results {
+    (my $template_variables, my $message) = @_;
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;
+    }
+
+    my $search_terms = param('searchres');
+    my @matching_isbns = search_books($search_terms);
+    my @table_rows;
+    my $newRow;    
+
+    $$template_variables{SEARCH_TERMS} = $search_terms;
+    foreach my $isbn (@matching_isbns) {
+        $newRow = makeRow($isbn);
+        $newRow .= <<eof;
+        <td><button class="btn-default btn-block" type="submit" name="action" value="add_search $isbn">Add</button><br>
+        <button class="btn-default btn-block" type="submit" name="action" value="details $isbn">Details</button><br></td>
+    </tr>
+eof
+        push(@table_rows, $newRow);
+    }
+
+    $$template_variables{TABLE_ROWS} = "@table_rows";
+    return "search_results";
+}
+
+
+#basket page with dynamically generated table.
+sub basket_page {
+    (my $template_variables) = @_;
+    my @rows;
+    
+    if (not $loggedIn) {
+        $last_message = "Must be logged in to check basket.";
+        return login_form($template_variables, 1);
+    }
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+
+    if (not -e "$baskets_dir/$id" or -z "$baskets_dir/$id") {
+        $last_message = "Basket is empty.";
+        return search_form($template_variables, 1);
+    }
+
+    my @bookDetails = read_num_basket($id);
+ 
+    foreach my $bookDetail (@bookDetails) {
+        $bookDetail =~ /^([^ ]*) (.*)/;
+        my $isbn = $1;
+        my $num = $2;
+        my $newRow = makeRow($isbn);
+        $newRow .= <<eof;
+        <td><input type="number" name="num" value="$num">
+        <button class="btn-default btn-block" type="submit" name="action" value="add_basket $isbn">Add</button><br> 
+        <button class="btn-default btn-block" type="submit" name="action" value="drop_basket $isbn">Drop</button><br>
+        <button class="btn-default btn-block" type="submit" name="action" value="details $isbn">Details</button><br></td>
+    </tr>
+eof
+        push(@rows, $newRow);        
+    }
+
+    $$template_variables{TABLE_ROWS} = "@rows";    
+    $$template_variables{TOTAL_PRICE} = total_books(@bookDetails);
+    
+    return "basket_page";
+}
+
+#simple login form.
+sub login_form {
+    (my $template_variables, my $message) = @_;
+
+    if ($loggedIn) {
+        $last_message = "Already logged in.";
+        return search_form($template_variables, 1);
+    }
+
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;
+    }
+
+    return "login_form";
+}
+
+#forgotten password form
+sub forgot_password {
+    (my $template_variables, my $message) = @_;
+
+    if ($loggedIn) {
+        $last_message = "Already logged in.";
+        return search_form($template_variables, 1);
+    }
+
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;    
+    }
+
+    return "forgot_password";
+}
+
+# simple search form
+sub search_form {
+    (my $template_variables, my $message) = @_;
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;
+    }
+
+    return "search_form";
+}
+
+############################################
+#####Data manipulation and Verification#####
+############################################
+
+#Makes sure all folders and files that exist actually do
+sub initFiles {
+    if (! -d $baskets_dir) {
+        mkdir($baskets_dir);
+    }
+
+    if (! -d $users_dir) {
+        mkdir($users_dir);
+    }
+
+    if (! -d $orders_dir) {
+        mkdir($orders_dir);
+    }
+
+    if (! -e "$orders_dir/$id") {
+        open(USER, ">", "$orders_dir/$id");
+        print(USER "");
+        close(USER);
+    }
+
+    if (! -e "$users_dir/$id") {
+        open(USER, ">", "$users_dir/$id");
+        print(USER "0");
+        close(USER);
+
+    }
+
+    if (! -e "$baskets_dir/$id") {
+        open(USER, ">", "$baskets_dir/$id");
+        print(USER "");
+        close(USER);
+    } 
+}
+
+#Finalizes the checkour order and redirects to the appropriate page.
+sub finalize {
+    (my $template_variables) = @_;
+
+    if (not $loggedIn) {
+        $last_message = "Must be logged in to check finalize order.";
+        return login_form($template_variables, 1);
+    }
+
+    if (not -e "$baskets_dir/$id" or -z "$baskets_dir/$id") {
+        $last_message = "Basket is empty can not finalize empty order.";
+        return search_form($template_variables, 1);
+    }
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+    
+    if (not defined param('cardnum') or not legal_credit_card_number(param('cardnum'))) {
+        return checkout_page($template_variables, 1);
+    } elsif (not defined param('expiry') or not legal_expiry_date(param('expiry'))) {
+        return checkout($template_variables, 1);
+    }
+
+    finalize_order($id, param('cardnum'), param('expiry')); 
+    $last_message = "Order success!\n";
+    return search_form($template_variables, 1);
+}
+
+#changes the password if the given URL is correct.
+sub change_password {
+    (my $template_variables, my $message) = @_;
+    my $username = param('username');
+    my $password = param('password');    
+    my $email;
+
+    if ($loggedIn) {
+        $last_message = "Already logged in.";
+        return search_form($template_variables, 1);
+    }
+
+    if (not legal_login($username) or not -e "$users_dir/$username") {
+        $last_message = "Invalid username";
+        return forgot_password($template_variables, 1);
+    }
+
+    if (not confirmed($username)) {
+        $last_message = "Unconfirmed email.";
+        return forgot_password($template_variables, 1);    
+    }
+
+    if (not legal_password($password)) {
+        $last_message = "illegal password.";
+        return forgot_password($template_variables, 1);
+    }
+
+    delete_newpass($username);
+    $email = get_email($username);
+
+    open(USER, ">>", "$users_dir/$username");
+    my $randVar = int(rand(10000000));
+    print(USER "passconf=" . $randVar . "\n");
+    print(USER "newpass=" . $password . "\n");
+    `export HOME=.
+     echo "$ENV{REDIRECT_SCRIPT_URI}?id=$username&passconf=$randVar" | 
+     mutt -s 'Mekong Registration' -- "$email"`;
+    close(USER);
+
+    $last_message = "Email sent.";
+    return login_form($template_variables, 1);
+}
+
+#get a user's email.
+sub get_email {
+    (my $username) = @_;
+    my $email;
+
+    open(USER, "<", "$users_dir/$username");
+
+    while (my $line = <USER>) {
+        if ($line =~ /email=(.*)\n/) {
+            $email = $1;
+        }
+    }
+    close(USER);
+
+    return $email;
+}
+
+#deletes the potential new password for a given user
+sub delete_newpass {
+    (my $username) = @_;
+    my $str = "";
+
+    open(USER, "<", "$users_dir/$username");
+
+    while (my $line = <USER>) {
+        if ($line !~ /^(passconf|newpass)/) {
+            $str .= $line;
+        }
+    }
+
+    close(USER);
+    open(USER, ">", "$users_dir/$username");
+    print(USER $str);
+}
+
+#loads appropriate pages when no action value is specified
+sub noAction {
+    (my $template_variables) = @_;
+    my $username; 
+    my $confNum;
+   
+    if (not defined $ENV{QUERY_STRING}) {
+        return login_form($template_variables, 0);
+    }
+
+    #confirmation email link
+    if ($ENV{QUERY_STRING} =~ /^id=(.*)&conf=([0-9]*)$/) {
+        $username = $1;
+        $confNum = $2;
+        if (legal_login($username) and -e "$users_dir/$username") {
+            if (not confirmed($username)) {
+                if (confirm_email($username, $confNum)) {
+                    $last_message = "email confirmed!";
+                    return login_form($template_variables, 1);   
+                }
+            }
+        }
+        $last_message = "invalid url";
+        return login_form($template_variables, 1);
+    #password reset link
+    } elsif ($ENV{QUERY_STRING} =~ /id=(.*)&passconf=([0-9]*)/) {
+        $username = $1;
+        $confNum = $2;
+        if (legal_login($username) and -e "$users_dir/$username") {
+            if (pending_reset($username)) {
+                if (reset_password($username, $confNum)) {
+                    $last_message = "Password reset!";
+                    return login_form($template_variables, 1);   
+                }
+            }
+        }
+        $last_message = "invalid url";
+        return login_form($template_variables, 1);
+    } else {
+        return login_form($template_variables, 0);
+    }
+}
+
+#returns true if a user account has had a request for
+#a password reset
+sub pending_reset {
+    (my $username) = @_;
+    my $pending = 0;
+
+    open(USER, "<", "$users_dir/$username");
+    while (my $line = <USER>) {
+        if ($line =~ /^passconf/) {
+            $pending = 1;
+            last;
+        }
+    }
+    close(USER);
+
+    return $pending;
+}
+
+#reset a user account password given that the details are correct
+#otherwise generates an error
+sub reset_password {
+    (my $username, my $confNum) = @_;
+    my $str = "";    
+    my $validConf = 0;
+    my $newPass;
+
+    open(USER, "<", "$users_dir/$username");
+
+    while (my $line = <USER>) {
+        if($line =~ /^passconf=(.*)\n/) {
+            if ($confNum = $1) {
+                $validConf = 1;
+            } 
+        } elsif ($line =~ /^newpass=(.*)\n/) {
+            $newPass = $1;
+        } 
+        $str .= $line;
+    }
+
+    close(USER);
+
+    if ($validConf) {
+        open(USER, ">", "$users_dir/$username");
+        $str =~ s/password=.*\n/password=$newPass\n/; 
+        print(USER $str);
+        close(USER);
+        delete_newpass($username);
+    }
+
+    return $validConf;
+}
+
+#add a book to the currently logged in user's basket.
+sub add_book {
+    (my $template_variables, my $action) = @_;
+
+    $action =~ /^add_([^ ]*) (.*)/;
+    my $prevPage = $1;
+    my $isbn = $2;
+    my $numBooks = param('num');
+
+    if (not $loggedIn) {
+        $last_message = "Must be logged in to add books.";
+        return login_form($template_variables, 1); 
+    } elsif (not defined $prevPage or not legal_isbn($isbn)) {
+        $last_message = "Invalid add request.";
+        return search_form($template_variables, 1);
+    } elsif (not defined $numBooks or $numBooks !~ /^[0-9]+$/) {
+        $last_message = "Invalid number of books.";
+    }
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+    
+    if ($prevPage eq "search") {
+        inc_basket($id, $isbn, 1);
+        $last_message = "Item successfully added to Basket.";
+        return search_results($template_variables, 1);    
+    } elsif ($prevPage eq "details") {
+        inc_basket($id, $isbn, 1);
+        print("Item added successfully to Basket.");
+        return details_page($template_variables, "details " . $isbn, 1);
+    } elsif ($prevPage eq "basket") {
+        add_basket($id, $isbn, $numBooks);
+        return basket_page($template_variables);
+    } elsif ($prevPage eq "checkout") {
+        add_basket($id, $isbn, $numBooks);
+        return checkout_page($template_variables);
+    } else {
+        $last_message = "Invalid add request.";
+        return search_form($template_variables, 1);
+    }
+}
+
+#delete all books of the same type from the currently
+#logged in users' basket
+sub drop_book {
+    (my $template_variables, my $action) = @_;
+    $action =~ /^drop_([^ ]*) (.*)/;
+    my $prevPage = $1;
+    my $isbn = $2;
+
+    if (not $loggedIn) {
+        $last_message = "Must be logged in to remove books.";
+        return login_form($template_variables, 1); 
+    } elsif (not legal_isbn($isbn)) {
+        $last_message = "Invalid remove request.";
+        return search_form($template_variables, 1);
+    }
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+
+
+    delete_basket($id, $isbn);
+    if ($prevPage eq "basket") {
+        return basket_page($template_variables);
+    } elsif ($prevPage eq "checkout") {
+        return checkout_page($template_variables);
+    } else {
+        $last_message = "Invalid remove request.";
+        return search_form($template_variables, 1);
+    }    
+}
+
+
+#logs in ... or out depending on whether the user is logged in
+sub login_out {
+    (my $template_variables) = @_;
+
+    if ($loggedIn) {
+        my $cookie = CGI::Cookie->new(-name=>'ID', -value=>"");
+        $cookie->bake();
+    }
+
+    $loggedIn = 0;
+    return "login_form";
+}
+
+#checks if a given cookie corresponds to a real user
+sub legalCookie {
+    (my $cookie) = @_;
+    my @arr;
+
+    if (not defined $cookie or not defined $cookie->value or $cookie->value eq "") {
+        return 0;
+    }
+
+    @arr = split(/:/, $cookie->value);
+    if (not legal_login($arr[0])) {
+        return 0;
+    } elsif (not legal_password($arr[1])) {
+        return 0;
+    } elsif (not authenticate($arr[0], $arr[1])) {
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
+#register a user given appropriate conditions are met
+#or display appropriate error message
+sub register {
+    (my $template_variables) = @_;
+
+    if ($loggedIn) {
+        $last_message = "Already logged in.";
+        return search_form($template_variables, 1);
+    }
+
+    my $username = param('username');
+    my $password = param('password');
+    my $notComplete = 0;
+
+    my @userDetails = (param('fullname'), param('street'), param('city'), 
+                       param('state'), param('postcode'), param('email'));
+
+    if (not legal_login($username)) {
+        return signup_form($template_variables, 1);
+    } elsif (not legal_password($password)) {
+        return signup_form($template_variables, 1);
+    } else {
+        foreach my $detail (@userDetails) {
+            if ($detail eq "") {
+                $notComplete = 1;
+            }
+        }
+         
+        if ($notComplete) {
+            $last_message = "Registration form is incomplete.";
+            return signup_form($template_variables, 1);
+        } elsif (-e "$users_dir/$username") {
+            $last_message = "Username already exists.";
+            return signup_form($template_variables, 1);
+        } else {
+            addUser($username, $password, @userDetails);
+            $last_message = "Please check your email to complete registration.";            
+            return search_form($template_variables, 1);
+        }
+    }
+}
+
+#add a user with an uncomfirmed email address
+sub addUser {
+    my @userDetails = @_;
+    my $i = 0;
+    
+    my $email;
+    open(USER, ">", "$users_dir/$userDetails[0]");
+    
+    foreach my $field (qw(login password name street city state postcode email)) {
+        if ($field eq "email") {
+            $email = $userDetails[$i];
+        } 
+        print(USER "$field=$userDetails[$i]\n");
+        $i++;
+    }
+    
+    my $randVar = int(rand(10000000));
+    print(USER "conf=" . $randVar . "\n");
+    
+    `export HOME=.
+     echo "$ENV{REDIRECT_SCRIPT_URI}?id=$userDetails[0]&conf=$randVar" | 
+     mutt -s 'Mekong Registration' -- "$email"`;
+    
+    close(USER);
+}
+
+
+
+#confirm a user's email given correct url.
+sub confirm_email {
+    (my $username, my $confirmNum) = @_;
+    my $str = "";
+    my $retVal = 1;
+
+    open(USER, "<", "$users_dir/$username");
+    
+    while (my $line = <USER>) {
+        if ($line =~ /^conf=(.*)\n/) {
+            if ($1 == $confirmNum) {
+                $retVal = 1;
+            } else {
+                $retVal = 0;
+                $str .=  $line;
+            }
+        } else {
+            $str .= $line;
+        }
+    }
+
+    close(USER);
+    open(USER, ">", "$users_dir/$username");
+    
+    print(USER $str);
+
+    return $retVal;
+}
+
+#checks whether user has confirmed their email
+sub confirmed {
+    (my $username) = @_;
+    my $retVal = 1;
+
+    open(USER, "<", "$users_dir/$username");
+    
+    while (my $line = <USER>) {
+        if ($line =~ /^conf=(.*)\n/) {
+            $retVal = 0;
+        }
+    }
+
+    close(USER);
+    return $retVal;
+}
+
+#check if a given username/password exist and returns appropriate page
+sub check_user {
+    (my $template_variables) = @_;
+
+    if ($loggedIn) {
+        $last_message = "Already logged in.";
+        return search_form($template_variables, 1);
+    }
+
+    my $username = param('username');
+    my $password = param('password');
+    my $remember = param('remember');
+
+    if (not legal_login($username)) {
+        return login_form($template_variables, 1);
+    } elsif (not legal_password($password)) {
+        return login_form($template_variables, 1);
+    } elsif (not authenticate($username, $password)) {
+        return login_form($template_variables, 1);
+    } elsif (not confirmed($username, -1)) {
+        $last_message = "Please confirm your email.";
+        return login_form($template_variables, 1);
+    } else {
+        $loggedIn = 1;
+        my $cookie;
+        if ($remember) {
+            $cookie = CGI::Cookie->new(-name=>'ID', 
+                                          -value=>"$username:$password",
+                                          -expires=> '+3M');
+        } else {
+            $cookie = CGI::Cookie->new(-name=>'ID', -value=>"$username:$password");
+        }
+        $cookie->bake();
+        return search_form($template_variables, 0);
+    }
+}
+
+
+#make a set of html tables for the order page
 sub make_order_tables {
     my @tables;
     my @rows;
@@ -184,686 +861,7 @@ eof
     return join("\n", @tables);
 }
 
-sub finalize {
-    (my $template_variables) = @_;
-
-    if (not $loggedIn) {
-        $last_message = "Must be logged in to check finalize order.";
-        return login_form($template_variables, 1);
-    }
-
-    if (not -e "$baskets_dir/$id" or -z "$baskets_dir/$id") {
-        $last_message = "Basket is empty can not finalize empty order.";
-        return search_form($template_variables, 1);
-    }
-
-    if (not $book_read) {
-        read_books($books_file);
-    }
-    
-    if (not defined param('cardnum') or not legal_credit_card_number(param('cardnum'))) {
-        return checkout_page($template_variables, 1);
-    } elsif (not defined param('expiry') or not legal_expiry_date(param('expiry'))) {
-        return checkout($template_variables, 1);
-    }
-
-    finalize_order($id, param('cardnum'), param('expiry')); 
-    $last_message = "Order success!\n";
-    return search_form($template_variables, 1);
-}
-
-sub checkout_page {
-    (my $template_variables, my $message) = @_;
-    my @rows;
-
-    if ($message) {
-        $$template_variables{ERROR} = $last_message;
-    }    
-
-    if (not $loggedIn) {
-        $last_message = "Must be logged in to checkout.";
-        return login_form($template_variables, 1);
-    }
-
-    if (not $book_read) {
-        read_books($books_file);
-    }
-
-    if (not -e "$baskets_dir/$id" or -z "$baskets_dir/$id") {
-        $last_message = "Basket is empty.";
-        return search_form($template_variables, 1);
-    }
-
-    my @bookDetails = read_num_basket($id);
- 
-    foreach my $bookDetail (@bookDetails) {
-        $bookDetail =~ /^([^ ]*) (.*)/;
-        my $isbn = $1;
-        my $num = $2;
-        my $newRow = makeRow($isbn);
-        $newRow .= <<eof;
-        <td><input type="number" name="num" value="$num">
-        <button class="btn-default btn-block" type="submit" name="action" value="add_checkout $isbn">Change</button><br> 
-        <button class="btn-default btn-block" type="submit" name="action" value="drop_checkout $isbn">Drop</button><br>
-        <button class="btn-default btn-block" type="submit" name="action" value="details $isbn">Details</button><br></td>
-    </tr>
-eof
-        push(@rows, $newRow);        
-    }
-
-    $$template_variables{TABLE_ROWS} = "@rows";    
-    $$template_variables{TOTAL_PRICE} = total_books(@bookDetails);
-    $$template_variables{NAME} = $user_details{name};
-    $$template_variables{STREET} = $user_details{street};
-    $$template_variables{CITY} = $user_details{city};
-    $$template_variables{STATE} = $user_details{state};
-    $$template_variables{POSTCODE} = $user_details{postcode};
-    $$template_variables{EMAIL} = $user_details{email};
-
-    
-    return "checkout_page";
-}
-
-sub initFiles {
-    if (! -d $baskets_dir) {
-        mkdir($baskets_dir);
-    }
-
-    if (! -d $users_dir) {
-        mkdir($users_dir);
-    }
-
-    if (! -d $orders_dir) {
-        mkdir($orders_dir);
-    }
-
-    if (! -e "$orders_dir/$id") {
-        open(USER, ">", "$orders_dir/$id");
-        print(USER "");
-        close(USER);
-    }
-
-    if (! -e "$users_dir/$id") {
-        open(USER, ">", "$users_dir/$id");
-        print(USER "0");
-        close(USER);
-
-    }
-
-    if (! -e "$baskets_dir/$id") {
-        open(USER, ">", "$baskets_dir/$id");
-        print(USER "");
-        close(USER);
-    } 
-}
-
-sub forgot_password {
-    (my $template_variables, my $message) = @_;
-
-    if ($loggedIn) {
-        $last_message = "Already logged in.";
-        return search_form($template_variables, 1);
-    }
-
-    if ($message) {
-        $$template_variables{ERROR} = $last_message;    
-    }
-
-    return "forgot_password";
-}
-
-sub change_password {
-    (my $template_variables, my $message) = @_;
-    my $username = param('username');
-    my $password = param('password');    
-    my $email;
-
-    if ($loggedIn) {
-        $last_message = "Already logged in.";
-        return search_form($template_variables, 1);
-    }
-
-    if (not legal_login($username) or not -e "$users_dir/$username") {
-        $last_message = "Invalid username";
-        return forgot_password($template_variables, 1);
-    }
-
-    if (not confirmed($username)) {
-        $last_message = "Unconfirmed email.";
-        return forgot_password($template_variables, 1);    
-    }
-
-    if (not legal_password($password)) {
-        $last_message = "illegal password.";
-        return forgot_password($template_variables, 1);
-    }
-
-    delete_newpass($username);
-    $email = get_email($username);
-
-    open(USER, ">>", "$users_dir/$username");
-    my $randVar = int(rand(10000000));
-    print(USER "passconf=" . $randVar . "\n");
-    print(USER "newpass=" . $password . "\n");
-    `export HOME=.
-     echo "$ENV{REDIRECT_SCRIPT_URI}?id=$username&passconf=$randVar" | 
-     mutt -s 'Mekong Registration' -- "$email"`;
-    close(USER);
-
-    $last_message = "Email sent.";
-    return login_form($template_variables, 1);
-}
-
-sub get_email {
-    (my $username) = @_;
-    my $email;
-
-    open(USER, "<", "$users_dir/$username");
-
-    while (my $line = <USER>) {
-        if ($line =~ /email=(.*)\n/) {
-            $email = $1;
-        }
-    }
-    close(USER);
-
-    return $email;
-}
-
-sub delete_newpass {
-    (my $username) = @_;
-    my $str = "";
-
-    open(USER, "<", "$users_dir/$username");
-
-    while (my $line = <USER>) {
-        if ($line !~ /^(passconf|newpass)/) {
-            $str .= $line;
-        }
-    }
-
-    close(USER);
-    open(USER, ">", "$users_dir/$username");
-    print(USER $str);
-}
-
-sub noAction {
-    (my $template_variables) = @_;
-    my $username; 
-    my $confNum;
-   
-    if (not defined $ENV{QUERY_STRING}) {
-        return login_form($template_variables, 0);
-    }
-
-    if ($ENV{QUERY_STRING} =~ /^id=(.*)&conf=([0-9]*)$/) {
-        $username = $1;
-        $confNum = $2;
-        if (legal_login($username) and -e "$users_dir/$username") {
-            if (not confirmed($username)) {
-                if (confirm_email($username, $confNum)) {
-                    $last_message = "email confirmed!";
-                    return login_form($template_variables, 1);   
-                }
-            }
-        }
-        $last_message = "invalid url";
-        return login_form($template_variables, 1);
-    } elsif ($ENV{QUERY_STRING} =~ /id=(.*)&passconf=([0-9]*)/) {
-        $username = $1;
-        $confNum = $2;
-        if (legal_login($username) and -e "$users_dir/$username") {
-            if (pending_reset($username)) {
-                if (reset_password($username, $confNum)) {
-                    $last_message = "Password reset!";
-                    return login_form($template_variables, 1);   
-                }
-            }
-        }
-        $last_message = "invalid url";
-        return login_form($template_variables, 1);
-    } else {
-        return login_form($template_variables, 0);
-    }
-}
-
-sub pending_reset {
-    (my $username) = @_;
-    my $pending = 0;
-
-    open(USER, "<", "$users_dir/$username");
-    while (my $line = <USER>) {
-        if ($line =~ /^passconf/) {
-            $pending = 1;
-            last;
-        }
-    }
-    close(USER);
-
-    return $pending;
-}
-
-sub reset_password {
-    (my $username, my $confNum) = @_;
-    my $str = "";    
-    my $validConf = 0;
-    my $newPass;
-
-    open(USER, "<", "$users_dir/$username");
-
-    while (my $line = <USER>) {
-        if($line =~ /^passconf=(.*)\n/) {
-            if ($confNum = $1) {
-                $validConf = 1;
-            } 
-        } elsif ($line =~ /^newpass=(.*)\n/) {
-            $newPass = $1;
-        } 
-        $str .= $line;
-    }
-
-    close(USER);
-
-    if ($validConf) {
-        open(USER, ">", "$users_dir/$username");
-        $str =~ s/password=.*\n/password=$newPass\n/; 
-        print(USER $str);
-        close(USER);
-        delete_newpass($username);
-    }
-
-    return $validConf;
-}
-
-sub add_book {
-    (my $template_variables, my $action) = @_;
-
-    $action =~ /^add_([^ ]*) (.*)/;
-    my $prevPage = $1;
-    my $isbn = $2;
-    my $numBooks = param('num');
-
-    if (not $loggedIn) {
-        $last_message = "Must be logged in to add books.";
-        return login_form($template_variables, 1); 
-    } elsif (not defined $prevPage or not legal_isbn($isbn)) {
-        $last_message = "Invalid add request.";
-        return search_form($template_variables, 1);
-    } elsif (not defined $numBooks or $numBooks !~ /^[0-9]+$/) {
-        $last_message = "Invalid number of books.";
-    }
-
-    if (not $book_read) {
-        read_books($books_file);
-    }
-    
-    if ($prevPage eq "search") {
-        inc_basket($id, $isbn, 1);
-        $last_message = "Item successfully added to Basket.";
-        return search_results($template_variables, 1);    
-    } elsif ($prevPage eq "details") {
-        inc_basket($id, $isbn, 1);
-        return details_page($template_variables, "details " . $isbn);
-    } elsif ($prevPage eq "basket") {
-        add_basket($id, $isbn, $numBooks);
-        return basket_page($template_variables);
-    } elsif ($prevPage eq "checkout") {
-        add_basket($id, $isbn, $numBooks);
-        return checkout_page($template_variables);
-    } else {
-        $last_message = "Invalid add request.";
-        return search_form($template_variables, 1);
-    }
-}
-
-sub drop_book {
-    (my $template_variables, my $action) = @_;
-    $action =~ /^drop_([^ ]*) (.*)/;
-    my $prevPage = $1;
-    my $isbn = $2;
-
-    if (not $loggedIn) {
-        $last_message = "Must be logged in to remove books.";
-        return login_form($template_variables, 1); 
-    } elsif (not legal_isbn($isbn)) {
-        $last_message = "Invalid remove request.";
-        return search_form($template_variables, 1);
-    }
-
-    if (not $book_read) {
-        read_books($books_file);
-    }
-
-
-    delete_basket($id, $isbn);
-    if ($prevPage eq "basket") {
-        return basket_page($template_variables);
-    } elsif ($prevPage eq "checkout") {
-        return checkout_page($template_variables);
-    } else {
-        $last_message = "Invalid remove request.";
-        return search_form($template_variables, 1);
-    }    
-}
-
-sub details_page {
-    (my $template_variables, my $action) = @_;
-
-    $action =~ /details (.*)/;
-    my $isbn = $1;
- 
-    if (not legal_isbn($isbn)) {
-        $last_message = "Isbn is not valid.";
-        return search_form($template_variables, 1);
-    }
-
-    if (not $book_read) {
-        read_books($books_file);
-    }
-
-    $$template_variables{isbn} = $isbn;
-
-    my @fields = ("title", "productdescription", "mediumimageurl", "authors",
-               "binding", "catalog", "ean", "price", "publication_date",
-               "publisher", "releasedate", "salesrank", "year");
-
-    foreach my $field (@fields) {
-        if (defined $book_details{$isbn}{$field}) {
-            $$template_variables{$field} = $book_details{$isbn}{$field};
-        } else {
-            $$template_variables{$field} = "";
-        }
-    }
-
-    return "details_page";
-}
-
-sub login_out {
-    (my $template_variables) = @_;
-
-    if ($loggedIn) {
-        my $cookie = CGI::Cookie->new(-name=>'ID', -value=>"");
-        $cookie->bake();
-    }
-
-    $loggedIn = 0;
-    return "login_form";
-}
-
-sub legalCookie {
-    (my $cookie) = @_;
-    my @arr;
-
-    if (not defined $cookie or not defined $cookie->value or $cookie->value eq "") {
-        return 0;
-    }
-
-    @arr = split(/:/, $cookie->value);
-    if (not legal_login($arr[0])) {
-        return 0;
-    } elsif (not legal_password($arr[1])) {
-        return 0;
-    } elsif (not authenticate($arr[0], $arr[1])) {
-        return 0;
-    } else {
-        return 1;
-    }
-}
-
-sub basket_page {
-    (my $template_variables) = @_;
-    my @rows;
-    
-    if (not $loggedIn) {
-        $last_message = "Must be logged in to check basket.";
-        return login_form($template_variables, 1);
-    }
-
-    if (not $book_read) {
-        read_books($books_file);
-    }
-
-    if (not -e "$baskets_dir/$id" or -z "$baskets_dir/$id") {
-        $last_message = "Basket is empty.";
-        return search_form($template_variables, 1);
-    }
-
-    my @bookDetails = read_num_basket($id);
- 
-    foreach my $bookDetail (@bookDetails) {
-        $bookDetail =~ /^([^ ]*) (.*)/;
-        my $isbn = $1;
-        my $num = $2;
-        my $newRow = makeRow($isbn);
-        $newRow .= <<eof;
-        <td><input type="number" name="num" value="$num">
-        <button class="btn-default btn-block" type="submit" name="action" value="add_basket $isbn">Add</button><br> 
-        <button class="btn-default btn-block" type="submit" name="action" value="drop_basket $isbn">Drop</button><br>
-        <button class="btn-default btn-block" type="submit" name="action" value="details $isbn">Details</button><br></td>
-    </tr>
-eof
-        push(@rows, $newRow);        
-    }
-
-    $$template_variables{TABLE_ROWS} = "@rows";    
-    $$template_variables{TOTAL_PRICE} = total_books(@bookDetails);
-    
-    return "basket_page";
-}
-
-sub login_form {
-    (my $template_variables, my $message) = @_;
-
-    if ($loggedIn) {
-        $last_message = "Already logged in.";
-        return search_form($template_variables, 1);
-    }
-
-    if ($message) {
-        $$template_variables{ERROR} = $last_message;
-    }
-
-    return "login_form";
-}
-
-sub register {
-    (my $template_variables) = @_;
-
-    if ($loggedIn) {
-        $last_message = "Already logged in.";
-        return search_form($template_variables, 1);
-    }
-
-    my $username = param('username');
-    my $password = param('password');
-    my $notComplete = 0;
-
-    my @userDetails = (param('fullname'), param('street'), param('city'), 
-                       param('state'), param('postcode'), param('email'));
-
-    if (not legal_login($username)) {
-        return signup_form($template_variables, 1);
-    } elsif (not legal_password($password)) {
-        return signup_form($template_variables, 1);
-    } else {
-        foreach my $detail (@userDetails) {
-            if ($detail eq "") {
-                $notComplete = 1;
-            }
-        }
-         
-        if ($notComplete) {
-            $last_message = "Registration form is incomplete.";
-            return signup_form($template_variables, 1);
-        } elsif (-e "$users_dir/$username") {
-            $last_message = "Username already exists.";
-            return signup_form($template_variables, 1);
-        } else {
-            addUser($username, $password, @userDetails);            
-            return search_form($template_variables, 0);
-        }
-    }
-}
-
-sub addUser {
-    my @userDetails = @_;
-    my $i = 0;
-    
-    my $email;
-    open(USER, ">", "$users_dir/$userDetails[0]");
-    
-    foreach my $field (qw(login password name street city state postcode email)) {
-        if ($field eq "email") {
-            $email = $userDetails[$i];
-        } 
-        print(USER "$field=$userDetails[$i]\n");
-        $i++;
-    }
-    
-    my $randVar = int(rand(10000000));
-    print(USER "conf=" . $randVar . "\n");
-    
-    `export HOME=.
-     echo "$ENV{REDIRECT_SCRIPT_URI}?id=$userDetails[0]&conf=$randVar" | 
-     mutt -s 'Mekong Registration' -- "$email"`;
-    
-    close(USER);
-}
-
-sub signup_form {
-    (my $template_variables, my $message) = @_;
-    
-    if ($message) {
-        $$template_variables{ERROR} = $last_message;
-    }
-
-    return "signup_form";
-}
-
-
-sub confirm_email {
-    (my $username, my $confirmNum) = @_;
-    my $str = "";
-    my $retVal = 1;
-
-    open(USER, "<", "$users_dir/$username");
-    
-    while (my $line = <USER>) {
-        if ($line =~ /^conf=(.*)\n/) {
-            if ($1 == $confirmNum) {
-                $retVal = 1;
-            } else {
-                $retVal = 0;
-                $str .=  $line;
-            }
-        } else {
-            $str .= $line;
-        }
-    }
-
-    close(USER);
-    open(USER, ">", "$users_dir/$username");
-    
-    print(USER $str);
-
-    return $retVal;
-}
-
-sub confirmed {
-    (my $username) = @_;
-    my $retVal = 1;
-
-    open(USER, "<", "$users_dir/$username");
-    
-    while (my $line = <USER>) {
-        if ($line =~ /^conf=(.*)\n/) {
-            $retVal = 0;
-        }
-    }
-
-    close(USER);
-    return $retVal;
-}
-
-#check if a given username/password exist and returns appropriate page
-sub check_user {
-    (my $template_variables) = @_;
-
-    if ($loggedIn) {
-        $last_message = "Already logged in.";
-        return search_form($template_variables, 1);
-    }
-
-    my $username = param('username');
-    my $password = param('password');
-    my $remember = param('remember');
-
-    if (not legal_login($username)) {
-        return login_form($template_variables, 1);
-    } elsif (not legal_password($password)) {
-        return login_form($template_variables, 1);
-    } elsif (not authenticate($username, $password)) {
-        return login_form($template_variables, 1);
-    } elsif (not confirmed($username, -1)) {
-        $last_message = "Please confirm your email.";
-        return login_form($template_variables, 1);
-    } else {
-        $loggedIn = 1;
-        my $cookie;
-        if ($remember) {
-            $cookie = CGI::Cookie->new(-name=>'ID', 
-                                          -value=>"$username:$password",
-                                          -expires=> '+3M');
-        } else {
-            $cookie = CGI::Cookie->new(-name=>'ID', -value=>"$username:$password");
-        }
-        $cookie->bake();
-        return search_form($template_variables, 0);
-    }
-}
-
-# simple search form
-sub search_form {
-    (my $template_variables, my $message) = @_;
-    if ($message) {
-        $$template_variables{ERROR} = $last_message;
-    }
-
-    return "search_form";
-}
-
-#display of search results
-sub search_results {
-    (my $template_variables, my $message) = @_;
-
-    if (not $book_read) {
-        read_books($books_file);
-    }
-
-    if ($message) {
-        $$template_variables{ERROR} = $last_message;
-    }
-
-    my $search_terms = param('searchres');
-    my @matching_isbns = search_books($search_terms);
-    my @table_rows;
-    my $newRow;    
-
-    $$template_variables{SEARCH_TERMS} = $search_terms;
-    foreach my $isbn (@matching_isbns) {
-        $newRow = makeRow($isbn);
-        $newRow .= <<eof;
-        <td><button class="btn-default btn-block" type="submit" name="action" value="add_search $isbn">Add</button><br>
-        <button class="btn-default btn-block" type="submit" name="action" value="details $isbn">Details</button><br></td>
-    </tr>
-eof
-        push(@table_rows, $newRow);
-    }
-
-    $$template_variables{TABLE_ROWS} = "@table_rows";
-    return "search_results";
-}
-
+#make an html row
 sub makeRow {
     (my $isbn) = @_;
     if (not defined $book_details{$isbn}{smallimageurl}) {
@@ -890,6 +888,8 @@ sub page_header() {
     (my $action) = @_;
     my %template_variables;
 
+    #button displays different text depending on whether user
+    #is logged in
     if($loggedIn) {
         $template_variables{LOG} = "Logout";
     } else {
