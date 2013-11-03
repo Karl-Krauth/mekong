@@ -102,3 +102,7 @@
     </table>
 
 </center>
+
+<form accept-charset="UTF-8" action="" method="post">
+    <button class="btn btn-success" type="submit" name="action" value="add_details <TMPL_VAR NAME="isbn">">Add to Cart</button>
+</form>

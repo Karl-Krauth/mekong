@@ -1,4 +1,4 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 # written by andrewt@cse.unsw.edu.au October 2013
 # as a starting point for COMP2041 assignment 2
 # http://www.cse.unsw.edu.au/~cs2041/assignments/mekong/
@@ -106,9 +106,71 @@ sub cgi_main {
 
 sub orders_page {
     (my $template_variables) = @_;
-
     
+    if (not $loggedIn) {
+        $last_message = "Must be logged in to check orders.";
+        return login_form($template_variables, 1);
+    }
 
+    if (not -e "$orders_dir/$id" or -z "$orders_dir/$id") {
+        $last_message = "No current orders.";
+        return search_form($template_variables, 1);
+    }
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+
+    $$template_variables{TABLES} = make_order_tables();
+
+    return "orders_page";
+}
+
+sub make_order_tables {
+    my @tables;
+    my @rows;
+    my @orderData;
+    my @date;
+    my $card;
+    my $expiry;
+    my $total;
+    my @weekday = qw(Mon Tue Wed Thu Fri Sat Sun);
+    my @month = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
+
+    foreach my $order (login_to_orders($id)) {
+        @orderData = read_order($order);
+        @date = localtime(shift(@orderData));
+        $card = shift(@orderData);
+        $expiry = shift(@orderData);
+        $total = total_books(@orderData);
+        my $currTable = "";
+
+        my $date = "$weekday[$date[6]] $month[$date[4]] $date[3] $date[2]:$date[1]:$date[0] "
+                   . ($date[5] + 1900);
+
+        $currTable .= "<table class=\"table\">\n";
+        $currTable .= "<tr colspan=\"4\">";
+        $currTable .= "<th>Order #$order - $date</th></tr>\n";
+        $currTable .= "<tr colspan=\"4\">";
+        $currTable .= "<th>Credit Card Number: $card(Expiry $expiry)</th>\n";
+        $currTable .= "</tr></table>";
+        $currTable .= "<table class=\"table table-bordered\">\n";
+        $currTable .= "<tr>";
+        $currTable .= "<th><b>Image</b></th><th><b>name</b></th>";
+        $currTable .= "<th>price</th><th>Number of books</th></tr>";
+        foreach my $bookDetail (@orderData) {
+            $bookDetail =~ /^([^ ]*) (.*)/;
+            my $isbn = $1;
+            my $num = $2;
+            my $newRow = makeRow($isbn);
+            $newRow .= "<td><center><p>$num</p></center></td>\n    </tr>\n";
+            $currTable .= $newRow;
+        }
+        $currTable .= "</table><br><br>\n";
+        push(@tables, $currTable);
+    }
+
+    return join("\n", @tables);
 }
 
 sub finalize {
@@ -1144,7 +1206,7 @@ sub read_num_basket {
 
 sub delete_basket {
     my ($login, $delete_isbn) = @_;
-    my @isbns = read_basket($login);
+    my @isbns = read_num_basket($login);
     open F, ">$baskets_dir/$login" or die "Can not open
     $baskets_dir/$login: $!";
     foreach my $isbn (@isbns) {
