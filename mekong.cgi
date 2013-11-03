@@ -53,7 +53,7 @@ exit 0;
 # to the search screen and it doesn't format the
 # search results at all
 sub cgi_main {
-    print "Content-Type: text/html\n";
+    print "Content-Type: text/html\n\n";
     
     set_global_variables();
 
@@ -66,6 +66,7 @@ sub cgi_main {
         $loggedIn = 1;
         my @arr = split(/:/, $cookies{ID}->value);
         $id = shift(@arr);
+        initFiles();
     }
 
     if (not defined $action) {
@@ -98,6 +99,39 @@ sub cgi_main {
     $template->param(%template_variables);
     print $template->output;
     print page_trailer();
+}
+
+sub initFiles {
+    if (! -d $baskets_dir) {
+        mkdir($baskets_dir);
+    }
+
+    if (! -d $users_dir) {
+        mkdir($users_dir);
+    }
+
+    if (! -d $orders_dir) {
+        mkdir($orders_dir);
+    }
+
+    if (! -e "$orders_dir/$id") {
+        open(USER, ">", "$orders_dir/$id");
+        print(USER "");
+        close(USER);
+    }
+
+    if (! -e "$users_dir/$id") {
+        open(USER, ">", "$users_dir/$id");
+        print(USER "");
+        close(USER);
+
+    }
+
+    if (! -e "$baskets_dir/$id") {
+        open(USER, ">", "$baskets_dir/$id");
+        print(USER "");
+        close(USER);
+    } 
 }
 
 sub forgot_password {
@@ -284,6 +318,7 @@ sub add_book {
     $action =~ /^add_([^ ]*) (.*)/;
     my $prevPage = $1;
     my $isbn = $2;
+    my $numBooks = param('num');
 
     if (not $loggedIn) {
         $last_message = "Must be logged in to add books.";
@@ -291,18 +326,23 @@ sub add_book {
     } elsif (not defined $prevPage or not legal_isbn($isbn)) {
         $last_message = "Invalid add request.";
         return search_form($template_variables, 1);
+    } elsif (not defined $numBooks or $numBooks !~ /^[0-9]+$/) {
+        $last_message = "Invalid number of books.";
     }
 
-    if (not -d $baskets_dir) {
-        mkdir($baskets_dir);
+    if (not $book_read) {
+        read_books($books_file);
     }
     
     if ($prevPage eq "search") {
-        add_basket($id, $isbn);
+        add_basket($id, $isbn, 1);
         return search_results($template_variables);    
     } elsif ($prevPage eq "details") {
-        add_basket($id, $isbn);
+        add_basket($id, $isbn, 1);
         return details_page($template_variables, "details " . $isbn);
+    } elsif ($prevPage eq "basket") {
+        add_basket($id, $isbn, $numBooks);
+        return basket_page($template_variables);
     } else {
         $last_message = "Invalid add request.";
         return search_form($template_variables, 1);
@@ -396,24 +436,33 @@ sub legalCookie {
 
 sub basket_page {
     (my $template_variables) = @_;
-    my @isbns;
     my @rows;
     
     if (not $loggedIn) {
         $last_message = "Must be logged in to check basket.";
         return login_form($template_variables, 1);
     }
-    
+
     if (not $book_read) {
         read_books($books_file);
     }
 
-    @isbns = read_basket($id);
+    if (not -e "$baskets_dir/$id" or -z "$baskets_dir/$id") {
+        $last_message = "Basket is empty.";
+        return search_form($template_variables, 1);
+    }
+
+    my @bookDetails = read_num_basket($id);
  
-    foreach my $isbn (@isbns) {
+    foreach my $bookDetail (@bookDetails) {
+        $bookDetail =~ /^([^ ]*) (.*)/;
+        my $isbn = $1;
+        my $num = $2;
         my $newRow = makeRow($isbn);
         $newRow .= <<eof;
-        <td><button class="btn" type="submit" name="action" value="drop $isbn">Drop</button><br>
+        <td><input type="number" name="num" value="$num">
+        <button class="btn" type="submit" name="action" value="add_basket $isbn">Add</button><br> 
+        <button class="btn" type="submit" name="action" value="drop $isbn">Drop</button><br>
         <button class="btn" type="submit" name="action" value="details $isbn">Details</button><br></td>
     </tr>
 eof
@@ -421,7 +470,7 @@ eof
     }
 
     $$template_variables{TABLE_ROWS} = "@rows";    
-    $$template_variables{TOTAL_PRICE} = total_books(@isbns);
+    $$template_variables{TOTAL_PRICE} = total_books(@bookDetails);
     
     return "basket_page";
 }
@@ -484,10 +533,6 @@ sub addUser {
     my @userDetails = @_;
     my $i = 0;
     
-    if (not -d $users_dir) {
-        mkdir($users_dir);
-    }
-
     my $email;
     open(USER, ">", "$users_dir/$userDetails[0]");
     
@@ -793,15 +838,18 @@ sub legal_expiry_date {
 # return total cost of specified books
 
 sub total_books {
-    my @isbns = @_;
+    my @bookDetails = @_;
     our %book_details;
     my $total = 0;
-    foreach my $isbn (@isbns) {
+    foreach my $book (@bookDetails) {
+        $book =~ /^([^ ]*) (.*)/;
+        my $isbn = $1;
+        my $num = $2;
         die "Internal error: unknown isbn $isbn  in total_books" if
 !$book_details{$isbn}; # shouldn't happen
         my $price = $book_details{$isbn}{price};
         $price =~ s/[^0-9\.]//g;
-        $total += $price;
+        $total += $price * $num;
     }
     return $total;
 }
@@ -970,11 +1018,36 @@ sub read_basket {
 
     close(F);
     chomp(@isbns);
-    !$book_details{$_} && die "Internal error: unknown isbn $_ in basket\n"
-foreach @isbns;
+
+    foreach my $isbn (@isbns) {
+        $isbn =~ s/^([^ ]*) ([0-9]+)/$1/;
+        if (!$book_details{$1}) {
+            die "Internal error: unknown isbn $1 in basket\n";
+        }
+    }
+
     return @isbns;
 }
 
+sub read_num_basket {
+    my ($login) = @_;
+    our %book_details;
+    open F, "$baskets_dir/$login" or return ();
+    my @isbns = <F>;
+
+    close(F);
+    chomp(@isbns);
+
+    foreach my $isbn (@isbns) {
+        if ($isbn !~ /^([^ ]*) ([0-9]+)/) {
+            die "Invalid isbn format: $isbn in basket\n";
+        } elsif (!$book_details{$1}) {
+            die "Internal error: unknown isbn $1 in basket\n";
+        }
+    }
+
+    return @isbns;
+}
 
 # delete specified book from specified user's basket
 # only first occurance is deleted
@@ -983,10 +1056,9 @@ sub delete_basket {
     my ($login, $delete_isbn) = @_;
     my @isbns = read_basket($login);
     open F, ">$baskets_dir/$login" or die "Can not open
-$baskets_dir/$login: $!";
+    $baskets_dir/$login: $!";
     foreach my $isbn (@isbns) {
-        if ($isbn eq $delete_isbn) {
-            $delete_isbn = "";
+        if ($isbn =~ /^$delete_isbn/) {
             next;
         }
         print F "$isbn\n";
@@ -999,10 +1071,16 @@ $baskets_dir/$login: $!";
 # add specified book to specified user's basket
 
 sub add_basket {
-    my ($login, $isbn) = @_;
+    my ($login, $isbn, $num) = @_;
+
+    delete_basket($login, $isbn);
     open F, ">>$baskets_dir/$login" or die "Can not open
-$baskets_dir/$login::$! \n";
-    print F "$isbn\n";
+    $baskets_dir/$login::$! \n";
+    
+    if ($num > 0) {
+        print F "$isbn $num\n";
+    }
+
     close(F);
 }
 
