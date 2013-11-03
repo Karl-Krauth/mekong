@@ -1,4 +1,4 @@
-<table border = "1">
+<table class = "table">
     <form accept-charset="UTF-8" action="" method="post">
         <TMPL_VAR NAME=TABLE_ROWS>
     </form>
@@ -7,4 +7,5 @@
 
 <form accept-charset="UTF-8" action="" method="post">
     <button class="btn btn-success" type="submit" name="action" value="checkout">Checkout</button>
+
 </form>

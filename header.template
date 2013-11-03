@@ -3,17 +3,33 @@
     <head> 
         <title>mekong.com.au</title> 
         <link href="//netdna.bootstrapcdn.com/bootstrap/3.0.1/css/bootstrap.min.css" rel="stylesheet"> 
+        <link rel="stylesheet" href="css/style.css">
         <script src="//netdna.bootstrapcdn.com/bootstrap/3.0.1/js/bootstrap.min.js"></script> 
+        <script src="http://code.jquery.com/jquery-1.10.1.min.js"></script>
+        <script>$(document).ready(function(){
+                    $(document).on("click",".login-button",function(){
+                        var form = $(this).closest("form");
+                        form.submit();
+                    });
+                });
+        </script>
     </head> 
     
     <body> 
+
+<form accept-charset="UTF-8" class="form-horizontal" action="" method="post">
+    <div class="header">
+        <div class="header-content">
+            <div class="container">
+                <div class="row">
+                        <button class="btn btn-danger" type="submit" name="action" value="home">Home</button>
+                         <button class="btn btn-info" type="submit" name="action" value="basket">Basket</button>
+                         <button class="btn btn-warning" type="submit" name="action" value="orders">Orders</button>
+                         <button class="btn btn-primary" type="submit" name="action" value="log"><TMPL_VAR NAME=LOG></button>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
  
-    <div class="container"> 
-
-    <form accept-charset="UTF-8" action="" method="post">
-        <button class="btn" type="submit" name="action" value="home">Home</button>
-        <button class="btn" type="submit" name="action" value="basket">Basket</button>
-        <button class="btn" type="submit" name="action" value="orders">Orders</button>
-        <button class="btn" type="submit" name="action" value="log"><TMPL_VAR NAME=LOG></button>
-    </form>    
-
+    <div class="container">

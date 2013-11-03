@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -w
 # written by andrewt@cse.unsw.edu.au October 2013
 # as a starting point for COMP2041 assignment 2
 # http://www.cse.unsw.edu.au/~cs2041/assignments/mekong/
@@ -53,7 +53,7 @@ exit 0;
 # to the search screen and it doesn't format the
 # search results at all
 sub cgi_main {
-    print "Content-Type: text/html\n\n";
+    print "Content-Type: text/html\n";
     
     set_global_variables();
 
@@ -81,13 +81,13 @@ sub cgi_main {
         case "login"         {$page = check_user(\%template_variables)}
         case "signup"        {$page = signup_form(\%template_variables, 0)}
         case "registered"    {$page = register(\%template_variables)}
-        case "search"        {$page = search_results(\%template_variables)}
+        case "search"        {$page = search_results(\%template_variables, 0)}
         case "home"          {$page = search_form(\%template_variables, 0)}
         case "log"           {$page = login_out(\%template_variables)}
         case "basket"        {$page = basket_page(\%template_variables)}
         case /^details /     {$page = details_page(\%template_variables, $action)}
         case /^add_([^ ]*) / {$page = add_book(\%template_variables, $action)}
-        case /^drop /        {$page = drop_book(\%template_variables, $action)}
+        case /^drop/        {$page = drop_book(\%template_variables, $action)}
         case "forgot"        {$page = forgot_password(\%template_variables)}
         case "orders"        {$page = orders_page(\%template_variables)}
         case "checkout"      {$page = checkout_page(\%template_variables, 0)}
@@ -148,16 +148,27 @@ sub make_order_tables {
         my $date = "$weekday[$date[6]] $month[$date[4]] $date[3] $date[2]:$date[1]:$date[0] "
                    . ($date[5] + 1900);
 
-        $currTable .= "<table class=\"table\">\n";
-        $currTable .= "<tr colspan=\"4\">";
-        $currTable .= "<th>Order #$order - $date</th></tr>\n";
-        $currTable .= "<tr colspan=\"4\">";
-        $currTable .= "<th>Credit Card Number: $card(Expiry $expiry)</th>\n";
-        $currTable .= "</tr></table>";
-        $currTable .= "<table class=\"table table-bordered\">\n";
-        $currTable .= "<tr>";
-        $currTable .= "<th><b>Image</b></th><th><b>name</b></th>";
-        $currTable .= "<th>price</th><th>Number of books</th></tr>";
+        $currTable = <<eof;
+<div class="panel panel-default">
+    <div class="panel-heading">Order #$order - $date<br>Credit Card Number: $card(Expiry $expiry)</div>
+
+    <!-- Table -->
+    <table class="table">
+        <tr>
+            <th>
+                Image
+            </th>
+            <th>
+                Name
+            </th>
+            <th>
+                Price
+            </th>
+            <th>
+                Number of Books
+            </th>
+eof
+
         foreach my $bookDetail (@orderData) {
             $bookDetail =~ /^([^ ]*) (.*)/;
             my $isbn = $1;
@@ -166,7 +177,7 @@ sub make_order_tables {
             $newRow .= "<td><center><p>$num</p></center></td>\n    </tr>\n";
             $currTable .= $newRow;
         }
-        $currTable .= "</table><br><br>\n";
+        $currTable .= "</table></div>\n";
         push(@tables, $currTable);
     }
 
@@ -232,9 +243,9 @@ sub checkout_page {
         my $newRow = makeRow($isbn);
         $newRow .= <<eof;
         <td><input type="number" name="num" value="$num">
-        <button class="btn" type="submit" name="action" value="add_basket $isbn">Add</button><br> 
-        <button class="btn" type="submit" name="action" value="drop $isbn">Drop</button><br>
-        <button class="btn" type="submit" name="action" value="details $isbn">Details</button><br></td>
+        <button class="btn-default btn-block" type="submit" name="action" value="add_checkout $isbn">Change</button><br> 
+        <button class="btn-default btn-block" type="submit" name="action" value="drop_checkout $isbn">Drop</button><br>
+        <button class="btn-default btn-block" type="submit" name="action" value="details $isbn">Details</button><br></td>
     </tr>
 eof
         push(@rows, $newRow);        
@@ -487,14 +498,18 @@ sub add_book {
     }
     
     if ($prevPage eq "search") {
-        add_basket($id, $isbn, 1);
-        return search_results($template_variables);    
+        inc_basket($id, $isbn, 1);
+        $last_message = "Item successfully added to Basket.";
+        return search_results($template_variables, 1);    
     } elsif ($prevPage eq "details") {
-        add_basket($id, $isbn, 1);
+        inc_basket($id, $isbn, 1);
         return details_page($template_variables, "details " . $isbn);
     } elsif ($prevPage eq "basket") {
         add_basket($id, $isbn, $numBooks);
         return basket_page($template_variables);
+    } elsif ($prevPage eq "checkout") {
+        add_basket($id, $isbn, $numBooks);
+        return checkout_page($template_variables);
     } else {
         $last_message = "Invalid add request.";
         return search_form($template_variables, 1);
@@ -503,8 +518,9 @@ sub add_book {
 
 sub drop_book {
     (my $template_variables, my $action) = @_;
-    $action =~ /^drop (.*)/;
-    my $isbn = $1;
+    $action =~ /^drop_([^ ]*) (.*)/;
+    my $prevPage = $1;
+    my $isbn = $2;
 
     if (not $loggedIn) {
         $last_message = "Must be logged in to remove books.";
@@ -518,8 +534,16 @@ sub drop_book {
         read_books($books_file);
     }
 
+
     delete_basket($id, $isbn);
-    return basket_page($template_variables);    
+    if ($prevPage eq "basket") {
+        return basket_page($template_variables);
+    } elsif ($prevPage eq "checkout") {
+        return checkout_page($template_variables);
+    } else {
+        $last_message = "Invalid remove request.";
+        return search_form($template_variables, 1);
+    }    
 }
 
 sub details_page {
@@ -613,9 +637,9 @@ sub basket_page {
         my $newRow = makeRow($isbn);
         $newRow .= <<eof;
         <td><input type="number" name="num" value="$num">
-        <button class="btn" type="submit" name="action" value="add_basket $isbn">Add</button><br> 
-        <button class="btn" type="submit" name="action" value="drop $isbn">Drop</button><br>
-        <button class="btn" type="submit" name="action" value="details $isbn">Details</button><br></td>
+        <button class="btn-default btn-block" type="submit" name="action" value="add_basket $isbn">Add</button><br> 
+        <button class="btn-default btn-block" type="submit" name="action" value="drop_basket $isbn">Drop</button><br>
+        <button class="btn-default btn-block" type="submit" name="action" value="details $isbn">Details</button><br></td>
     </tr>
 eof
         push(@rows, $newRow);        
@@ -810,10 +834,14 @@ sub search_form {
 
 #display of search results
 sub search_results {
-    (my $template_variables) = @_;
+    (my $template_variables, my $message) = @_;
 
     if (not $book_read) {
         read_books($books_file);
+    }
+
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;
     }
 
     my $search_terms = param('searchres');
@@ -825,8 +853,8 @@ sub search_results {
     foreach my $isbn (@matching_isbns) {
         $newRow = makeRow($isbn);
         $newRow .= <<eof;
-        <td><button class="btn" type="submit" name="action" value="add_search $isbn">Add</button><br>
-        <button class="btn" type="submit" name="action" value="details $isbn">Details</button><br></td>
+        <td><button class="btn-default btn-block" type="submit" name="action" value="add_search $isbn">Add</button><br>
+        <button class="btn-default btn-block" type="submit" name="action" value="details $isbn">Details</button><br></td>
     </tr>
 eof
         push(@table_rows, $newRow);
@@ -879,7 +907,9 @@ sub page_trailer() {
     my $debugging_info = debugging_info();
     
     return <<eof;
-    $debugging_info
+      <footer style="text-align: center;">
+        <p>Karl Krauth 2013</p>
+      </footer>
     </div>
 <body>
 </html>
@@ -1219,6 +1249,29 @@ sub delete_basket {
     unlink "$baskets_dir/$login" if ! -s "$baskets_dir/$login";
 }
 
+
+sub inc_basket {
+    my ($login, $isbn, $num) = @_;
+    my @isbns = read_num_basket($login);
+    my $seen = 0;
+    open F, ">$baskets_dir/$login" or die "Can not open
+    $baskets_dir/$login: $!";
+    foreach my $detail (@isbns) {
+        if ($detail =~ /^$isbn ([0-9]*)/) {
+            print F "$isbn " . ($1 + $num);
+            $seen = 1;    
+        } else {
+            print F "$detail\n";
+        }
+    }
+
+    if (not $seen) {
+        print F "$isbn $num";
+    }
+
+    close(F);
+    
+}
 
 # add specified book to specified user's basket
 
