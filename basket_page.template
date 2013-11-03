@@ -4,3 +4,7 @@
     </form>
     <tr><td colspan = "2">Total price:</td> <td>$<TMPL_VAR NAME=TOTAL_PRICE></td></tr>
 </table>
+
+<form accept-charset="UTF-8" action="" method="post">
+    <button class="btn btn-success" type="submit" name="action" value="checkout">Checkout</button>
+</form>

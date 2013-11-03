@@ -9,7 +9,7 @@ use CGI qw/:all/;
 use CGI::Cookie;
 use HTML::Template;
 use Switch;
-use autodie;
+#use autodie;
 
 ######################################
 ###########global variables###########
@@ -89,7 +89,10 @@ sub cgi_main {
         case /^add_([^ ]*) / {$page = add_book(\%template_variables, $action)}
         case /^drop /        {$page = drop_book(\%template_variables, $action)}
         case "forgot"        {$page = forgot_password(\%template_variables)}
+        case "orders"        {$page = orders_page(\%template_variables)}
+        case "checkout"      {$page = checkout_page(\%template_variables, 0)}
         case "recover"       {$page = change_password(\%template_variables, 0)}             
+        case "finalize"      {$page = finalize(\%template_variables)}
         else                 {$page = noAction(\%template_variables)}
     }
 
@@ -99,6 +102,93 @@ sub cgi_main {
     $template->param(%template_variables);
     print $template->output;
     print page_trailer();
+}
+
+sub orders_page {
+    (my $template_variables) = @_;
+
+    
+
+}
+
+sub finalize {
+    (my $template_variables) = @_;
+
+    if (not $loggedIn) {
+        $last_message = "Must be logged in to check finalize order.";
+        return login_form($template_variables, 1);
+    }
+
+    if (not -e "$baskets_dir/$id" or -z "$baskets_dir/$id") {
+        $last_message = "Basket is empty can not finalize empty order.";
+        return search_form($template_variables, 1);
+    }
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+    
+    if (not defined param('cardnum') or not legal_credit_card_number(param('cardnum'))) {
+        return checkout_page($template_variables, 1);
+    } elsif (not defined param('expiry') or not legal_expiry_date(param('expiry'))) {
+        return checkout($template_variables, 1);
+    }
+
+    finalize_order($id, param('cardnum'), param('expiry')); 
+    $last_message = "Order success!\n";
+    return search_form($template_variables, 1);
+}
+
+sub checkout_page {
+    (my $template_variables, my $message) = @_;
+    my @rows;
+
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;
+    }    
+
+    if (not $loggedIn) {
+        $last_message = "Must be logged in to checkout.";
+        return login_form($template_variables, 1);
+    }
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+
+    if (not -e "$baskets_dir/$id" or -z "$baskets_dir/$id") {
+        $last_message = "Basket is empty.";
+        return search_form($template_variables, 1);
+    }
+
+    my @bookDetails = read_num_basket($id);
+ 
+    foreach my $bookDetail (@bookDetails) {
+        $bookDetail =~ /^([^ ]*) (.*)/;
+        my $isbn = $1;
+        my $num = $2;
+        my $newRow = makeRow($isbn);
+        $newRow .= <<eof;
+        <td><input type="number" name="num" value="$num">
+        <button class="btn" type="submit" name="action" value="add_basket $isbn">Add</button><br> 
+        <button class="btn" type="submit" name="action" value="drop $isbn">Drop</button><br>
+        <button class="btn" type="submit" name="action" value="details $isbn">Details</button><br></td>
+    </tr>
+eof
+        push(@rows, $newRow);        
+    }
+
+    $$template_variables{TABLE_ROWS} = "@rows";    
+    $$template_variables{TOTAL_PRICE} = total_books(@bookDetails);
+    $$template_variables{NAME} = $user_details{name};
+    $$template_variables{STREET} = $user_details{street};
+    $$template_variables{CITY} = $user_details{city};
+    $$template_variables{STATE} = $user_details{state};
+    $$template_variables{POSTCODE} = $user_details{postcode};
+    $$template_variables{EMAIL} = $user_details{email};
+
+    
+    return "checkout_page";
 }
 
 sub initFiles {
@@ -122,7 +212,7 @@ sub initFiles {
 
     if (! -e "$users_dir/$id") {
         open(USER, ">", "$users_dir/$id");
-        print(USER "");
+        print(USER "0");
         close(USER);
 
     }
@@ -296,7 +386,7 @@ sub reset_password {
         } elsif ($line =~ /^newpass=(.*)\n/) {
             $newPass = $1;
         } 
-            $str .= $line;
+        $str .= $line;
     }
 
     close(USER);
@@ -1102,7 +1192,7 @@ $orders_dir/NEXT_ORDER_NUMBER: $!\n";
     print F ($order_number + 1);
     close(F);
 
-    my @basket_isbns = read_basket($login);
+    my @basket_isbns = read_num_basket($login);
     open ORDER,">$orders_dir/$order_number" or die "Can not open
 $orders_dir/$order_number:$! \n";
     print ORDER "order_time=".time()."\n";

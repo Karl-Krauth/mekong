@@ -1,0 +1,40 @@
+<h3><TMPL_VAR NAME=ERROR></h3>
+<table border = "1">
+    <form accept-charset="UTF-8" action="" method="post">
+        <TMPL_VAR NAME=TABLE_ROWS>
+    </form>
+    <tr><td colspan = "2">Total price:</td> <td>$<TMPL_VAR NAME=TOTAL_PRICE></td></tr>
+</table>
+
+<table>
+    <tr>
+        <td><b>Name:</b></td>
+        <td><TMPL_VAR NAME=NAME></td>
+    </tr>
+    <tr>
+        <td><b>Street:</b></td>
+        <td><TMPL_VAR NAME=STREET></td>
+    </tr>
+    <tr>
+        <td><b>City:</b></td>
+        <td><TMPL_VAR NAME=CITY></td>
+    </tr>
+    <tr>
+        <td><b>State:</b></td>
+        <td><TMPL_VAR NAME=STATE></td>
+    </tr>
+    <tr>
+        <td><b>Postcode:</b></td>
+        <td><TMPL_VAR NAME=POSTCODE></td>
+    </tr>
+    <tr>
+        <td><b>Email:</b></td>
+        <td><TMPL_VAR NAME=EMAIL></td>
+    </tr>
+</table>
+
+<form accept-charset="UTF-8" action="" method="post">
+    <input class="span3" name="cardnum" placeholder="Card Number" type="text"> 
+    <input class="span3" name="expiry" placeholder="Expiry Date" type="text"> 
+    <button class="btn btn-success" type="submit" name="action" value="finalize">Finalize</button>
+</form>
