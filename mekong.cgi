@@ -111,7 +111,7 @@ sub cgi_main {
 ####################################
 #details of a particular book
 sub details_page {
-    (my $template_variables, my $action, $message) = @_;
+    (my $template_variables, my $action, my $message) = @_;
 
     $action =~ /details (.*)/;
     my $isbn = $1;
@@ -202,8 +202,10 @@ sub search_results {
     foreach my $isbn (@matching_isbns) {
         $newRow = makeRow($isbn);
         $newRow .= <<eof;
-        <td><button class="btn-default btn-block" type="submit" name="action" value="add_search $isbn">Add</button><br>
-        <button class="btn-default btn-block" type="submit" name="action" value="details $isbn">Details</button><br></td>
+        <td><button class="btn-default btn-block" type="submit" 
+        name="action" value="add_search $isbn">Add</button><br>
+        <button class="btn-default btn-block" type="submit" name="action" 
+        value="details $isbn">Details</button><br></td>
     </tr>
 eof
         push(@table_rows, $newRow);
@@ -239,13 +241,20 @@ sub basket_page {
         $bookDetail =~ /^([^ ]*) (.*)/;
         my $isbn = $1;
         my $num = $2;
-        my $newRow = makeRow($isbn);
+        my $newRow = <<eof;
+        <form accept-charset="UTF-8"
+        class="form-horizontal" action="" method="post">
+eof
+        $newRow .= makeRow($isbn);
         $newRow .= <<eof;
         <td><input type="number" name="num" value="$num">
-        <button class="btn-default btn-block" type="submit" name="action" value="add_basket $isbn">Add</button><br> 
-        <button class="btn-default btn-block" type="submit" name="action" value="drop_basket $isbn">Drop</button><br>
-        <button class="btn-default btn-block" type="submit" name="action" value="details $isbn">Details</button><br></td>
-    </tr>
+        <button class="btn-default btn-block" type="submit" 
+        name="action" value="add_basket $isbn">Add</button><br> 
+        <button class="btn-default btn-block" type="submit" 
+        name="action" value="drop_basket $isbn">Drop</button><br>
+        <button class="btn-default btn-block" type="submit" 
+        name="action" value="details $isbn">Details</button><br></td>
+    </tr></form>
 eof
         push(@rows, $newRow);        
     }
@@ -286,6 +295,66 @@ sub forgot_password {
     }
 
     return "forgot_password";
+}
+
+#checkout page with dynamic html tables
+sub checkout_page {
+    (my $template_variables, my $message) = @_;
+    my @rows;
+
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;
+    }    
+
+    if (not $loggedIn) {
+        $last_message = "Must be logged in to checkout.";
+        return login_form($template_variables, 1);
+    }
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+
+    if (not -e "$baskets_dir/$id" or -z "$baskets_dir/$id") {
+        $last_message = "Basket is empty.";
+        return search_form($template_variables, 1);
+    }
+
+    my @bookDetails = read_num_basket($id);
+ 
+    foreach my $bookDetail (@bookDetails) {
+        $bookDetail =~ /^([^ ]*) (.*)/;
+        my $isbn = $1;
+        my $num = $2;
+        my $newRow = <<eof;
+        <form accept-charset="UTF-8"
+        class="form-horizontal" action="" method="post">
+eof
+        $newRow = makeRow($isbn);
+        $newRow .= <<eof;
+        <td><input type="number" name="num" value="$num">
+        <button class="btn-default btn-block" type="submit" 
+        name="action" value="add_checkout $isbn">Change</button><br> 
+        <button class="btn-default btn-block" type="submit" name="action" 
+        value="drop_checkout $isbn">Drop</button><br>
+        <button class="btn-default btn-block" type="submit" name="action" 
+        value="details $isbn">Details</button><br></td>
+    </tr></form>
+eof
+        push(@rows, $newRow);        
+    }
+
+    $$template_variables{TABLE_ROWS} = "@rows";    
+    $$template_variables{TOTAL_PRICE} = total_books(@bookDetails);
+    $$template_variables{NAME} = $user_details{name};
+    $$template_variables{STREET} = $user_details{street};
+    $$template_variables{CITY} = $user_details{city};
+    $$template_variables{STATE} = $user_details{state};
+    $$template_variables{POSTCODE} = $user_details{postcode};
+    $$template_variables{EMAIL} = $user_details{email};
+
+    
+    return "checkout_page";
 }
 
 # simple search form
@@ -401,7 +470,7 @@ sub change_password {
     print(USER "newpass=" . $password . "\n");
     `export HOME=.
      echo "$ENV{REDIRECT_SCRIPT_URI}?id=$username&passconf=$randVar" | 
-     mutt -s 'Mekong Registration' -- "$email"`;
+     mutt -s 'Password Reset' -- '$email'`;
     close(USER);
 
     $last_message = "Email sent.";
@@ -537,7 +606,6 @@ sub reset_password {
 
     return $validConf;
 }
-
 #add a book to the currently logged in user's basket.
 sub add_book {
     (my $template_variables, my $action) = @_;
@@ -567,14 +635,14 @@ sub add_book {
         return search_results($template_variables, 1);    
     } elsif ($prevPage eq "details") {
         inc_basket($id, $isbn, 1);
-        print("Item added successfully to Basket.");
+        $last_message = "Item added successfully to Basket.";
         return details_page($template_variables, "details " . $isbn, 1);
     } elsif ($prevPage eq "basket") {
         add_basket($id, $isbn, $numBooks);
         return basket_page($template_variables);
     } elsif ($prevPage eq "checkout") {
         add_basket($id, $isbn, $numBooks);
-        return checkout_page($template_variables);
+        return checkout_page($template_variables, 0);
     } else {
         $last_message = "Invalid add request.";
         return search_form($template_variables, 1);
@@ -606,7 +674,7 @@ sub drop_book {
     if ($prevPage eq "basket") {
         return basket_page($template_variables);
     } elsif ($prevPage eq "checkout") {
-        return checkout_page($template_variables);
+        return checkout_page($template_variables, 0);
     } else {
         $last_message = "Invalid remove request.";
         return search_form($template_variables, 1);
@@ -648,6 +716,17 @@ sub legalCookie {
     }
 }
 
+#provides basic checking to prevent email vulns
+sub legalEmail {
+    (my $email) = @_;
+
+    if ($email =~ /^.+@.+/ and $email !~ /'/) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
 #register a user given appropriate conditions are met
 #or display appropriate error message
 sub register {
@@ -668,6 +747,9 @@ sub register {
     if (not legal_login($username)) {
         return signup_form($template_variables, 1);
     } elsif (not legal_password($password)) {
+        return signup_form($template_variables, 1);
+    } elsif (not legalEmail(param('email'))) {
+        $last_message = "illegal email address";
         return signup_form($template_variables, 1);
     } else {
         foreach my $detail (@userDetails) {
@@ -711,7 +793,7 @@ sub addUser {
     
     `export HOME=.
      echo "$ENV{REDIRECT_SCRIPT_URI}?id=$userDetails[0]&conf=$randVar" | 
-     mutt -s 'Mekong Registration' -- "$email"`;
+     mutt -s 'Mekong Registration' -- '$email'`;
     
     close(USER);
 }
@@ -1258,7 +1340,7 @@ sub inc_basket {
     $baskets_dir/$login: $!";
     foreach my $detail (@isbns) {
         if ($detail =~ /^$isbn ([0-9]*)/) {
-            print F "$isbn " . ($1 + $num);
+            print F "$isbn " . ($1 + $num) . "\n";
             $seen = 1;    
         } else {
             print F "$detail\n";

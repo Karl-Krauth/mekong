@@ -1,4 +1,5 @@
 <center>
+    <h3><TMPL_VAR NAME="ERROR"></h3>
     <h3><TMPL_VAR NAME="title"></h3>
     <p><TMPL_VAR NAME="productdescription"></p>
     <img src="<TMPL_VAR NAME="mediumimageurl">" />
