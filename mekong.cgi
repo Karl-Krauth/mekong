@@ -19,7 +19,7 @@ our $books_file = "$base_dir/books.json";
 our $orders_dir = "$base_dir/orders";
 our $baskets_dir = "$base_dir/baskets";
 our $users_dir = "$base_dir/users";
-our $last_error = "";
+our $last_message = "";
 our %user_details = ();
 our %book_details = ();
 our $book_read = 0;
@@ -88,7 +88,7 @@ sub cgi_main {
         case /^add_([^ ]*) / {$page = add_book(\%template_variables, $action)}
         case /^drop /        {$page = drop_book(\%template_variables, $action)}
         case "forgot"        {$page = forgot_password(\%template_variables)}
-        case "recover"       {$page = recover_password(\%template_variables, 0)}             
+        case "recover"       {$page = change_password(\%template_variables, 0)}             
         else                 {$page = noAction(\%template_variables)}
     }
 
@@ -97,35 +97,97 @@ sub cgi_main {
     my $template = HTML::Template->new(filename => "$page.template");    
     $template->param(%template_variables);
     print $template->output;
-    print $loggedIn;
     print page_trailer();
 }
 
-sub recover_password{
-    my ($template_variables) = @_;
-    my $username = param('username');
-
-    if (not legal_login($username) or not -e "$users_dir/$username") {
-        $last_error = "Invalid username.";
-        return forgot_password($template_variables, 1);
-    }    
-
-    #TODO email logic
-    return login_form($template_variables, 0);
-}
-
 sub forgot_password {
-    (my $template_variables, my $error) = @_;
+    (my $template_variables, my $message) = @_;
 
-    if ($error) {
-        $$template_variables{ERROR} = $last_error;    
+    if ($loggedIn) {
+        $last_message = "Already logged in.";
+        return search_form($template_variables, 1);
+    }
+
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;    
     }
 
     return "forgot_password";
 }
 
 sub change_password {
+    (my $template_variables, my $message) = @_;
+    my $username = param('username');
+    my $password = param('password');    
+    my $email;
 
+    if ($loggedIn) {
+        $last_message = "Already logged in.";
+        return search_form($template_variables, 1);
+    }
+
+    if (not legal_login($username) or not -e "$users_dir/$username") {
+        $last_message = "Invalid username";
+        return forgot_password($template_variables, 1);
+    }
+
+    if (not confirmed($username)) {
+        $last_message = "Unconfirmed email.";
+        return forgot_password($template_variables, 1);    
+    }
+
+    if (not legal_password($password)) {
+        $last_message = "illegal password.";
+        return forgot_password($template_variables, 1);
+    }
+
+    delete_newpass($username);
+    $email = get_email($username);
+
+    open(USER, ">>", "$users_dir/$username");
+    my $randVar = int(rand(10000000));
+    print(USER "passconf=" . $randVar . "\n");
+    print(USER "newpass=" . $password . "\n");
+    `export HOME=.
+     echo "$ENV{REDIRECT_SCRIPT_URI}?id=$username&passconf=$randVar" | 
+     mutt -s 'Mekong Registration' -- "$email"`;
+    close(USER);
+
+    $last_message = "Email sent.";
+    return login_form($template_variables, 1);
+}
+
+sub get_email {
+    (my $username) = @_;
+    my $email;
+
+    open(USER, "<", "$users_dir/$username");
+
+    while (my $line = <USER>) {
+        if ($line =~ /email=(.*)\n/) {
+            $email = $1;
+        }
+    }
+    close(USER);
+
+    return $email;
+}
+
+sub delete_newpass {
+    (my $username) = @_;
+    my $str = "";
+
+    open(USER, "<", "$users_dir/$username");
+
+    while (my $line = <USER>) {
+        if ($line !~ /^(passconf|newpass)/) {
+            $str .= $line;
+        }
+    }
+
+    close(USER);
+    open(USER, ">", "$users_dir/$username");
+    print(USER $str);
 }
 
 sub noAction {
@@ -143,18 +205,77 @@ sub noAction {
         if (legal_login($username) and -e "$users_dir/$username") {
             if (not confirmed($username)) {
                 if (confirm_email($username, $confNum)) {
-                    $last_error = "email confirmed!";
+                    $last_message = "email confirmed!";
                     return login_form($template_variables, 1);   
                 }
             }
         }
-        $last_error = "invalid url";
+        $last_message = "invalid url";
         return login_form($template_variables, 1);
-    } elsif (0) {
-
+    } elsif ($ENV{QUERY_STRING} =~ /id=(.*)&passconf=([0-9]*)/) {
+        $username = $1;
+        $confNum = $2;
+        if (legal_login($username) and -e "$users_dir/$username") {
+            if (pending_reset($username)) {
+                if (reset_password($username, $confNum)) {
+                    $last_message = "Password reset!";
+                    return login_form($template_variables, 1);   
+                }
+            }
+        }
+        $last_message = "invalid url";
+        return login_form($template_variables, 1);
     } else {
         return login_form($template_variables, 0);
     }
+}
+
+sub pending_reset {
+    (my $username) = @_;
+    my $pending = 0;
+
+    open(USER, "<", "$users_dir/$username");
+    while (my $line = <USER>) {
+        if ($line =~ /^passconf/) {
+            $pending = 1;
+            last;
+        }
+    }
+    close(USER);
+
+    return $pending;
+}
+
+sub reset_password {
+    (my $username, my $confNum) = @_;
+    my $str = "";    
+    my $validConf = 0;
+    my $newPass;
+
+    open(USER, "<", "$users_dir/$username");
+
+    while (my $line = <USER>) {
+        if($line =~ /^passconf=(.*)\n/) {
+            if ($confNum = $1) {
+                $validConf = 1;
+            } 
+        } elsif ($line =~ /^newpass=(.*)\n/) {
+            $newPass = $1;
+        } 
+            $str .= $line;
+    }
+
+    close(USER);
+
+    if ($validConf) {
+        open(USER, ">", "$users_dir/$username");
+        $str =~ s/password=.*\n/password=$newPass\n/; 
+        print(USER $str);
+        close(USER);
+        delete_newpass($username);
+    }
+
+    return $validConf;
 }
 
 sub add_book {
@@ -165,10 +286,10 @@ sub add_book {
     my $isbn = $2;
 
     if (not $loggedIn) {
-        $last_error = "Must be logged in to add books.";
+        $last_message = "Must be logged in to add books.";
         return login_form($template_variables, 1); 
     } elsif (not defined $prevPage or not legal_isbn($isbn)) {
-        $last_error = "Invalid add request.";
+        $last_message = "Invalid add request.";
         return search_form($template_variables, 1);
     }
 
@@ -183,7 +304,7 @@ sub add_book {
         add_basket($id, $isbn);
         return details_page($template_variables, "details " . $isbn);
     } else {
-        $last_error = "Invalid add request.";
+        $last_message = "Invalid add request.";
         return search_form($template_variables, 1);
     }
 }
@@ -194,10 +315,10 @@ sub drop_book {
     my $isbn = $1;
 
     if (not $loggedIn) {
-        $last_error = "Must be logged in to remove books.";
+        $last_message = "Must be logged in to remove books.";
         return login_form($template_variables, 1); 
     } elsif (not legal_isbn($isbn)) {
-        $last_error = "Invalid remove request.";
+        $last_message = "Invalid remove request.";
         return search_form($template_variables, 1);
     }
 
@@ -216,7 +337,7 @@ sub details_page {
     my $isbn = $1;
  
     if (not legal_isbn($isbn)) {
-        $last_error = "Isbn is not valid.";
+        $last_message = "Isbn is not valid.";
         return search_form($template_variables, 1);
     }
 
@@ -279,7 +400,7 @@ sub basket_page {
     my @rows;
     
     if (not $loggedIn) {
-        $last_error = "Must be logged in to check basket.";
+        $last_message = "Must be logged in to check basket.";
         return login_form($template_variables, 1);
     }
     
@@ -306,15 +427,15 @@ eof
 }
 
 sub login_form {
-    (my $template_variables, my $error) = @_;
+    (my $template_variables, my $message) = @_;
 
     if ($loggedIn) {
-        $last_error = "Already logged in.";
+        $last_message = "Already logged in.";
         return search_form($template_variables, 1);
     }
 
-    if ($error) {
-        $$template_variables{ERROR} = $last_error;
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;
     }
 
     return "login_form";
@@ -324,7 +445,7 @@ sub register {
     (my $template_variables) = @_;
 
     if ($loggedIn) {
-        $last_error = "Already logged in.";
+        $last_message = "Already logged in.";
         return search_form($template_variables, 1);
     }
 
@@ -347,10 +468,10 @@ sub register {
         }
          
         if ($notComplete) {
-            $last_error = "Registration form is incomplete.";
+            $last_message = "Registration form is incomplete.";
             return signup_form($template_variables, 1);
         } elsif (-e "$users_dir/$username") {
-            $last_error = "Username already exists.";
+            $last_message = "Username already exists.";
             return signup_form($template_variables, 1);
         } else {
             addUser($username, $password, @userDetails);            
@@ -381,17 +502,18 @@ sub addUser {
     my $randVar = int(rand(10000000));
     print(USER "conf=" . $randVar . "\n");
     
-    `echo "$ENV{REDIRECT_SCRIPT_URI}?name=$userDetails[0]&id=$randVar" 
-    | mutt -s 'Mekong Registration' -- "$email"`;
+    `export HOME=.
+     echo "$ENV{REDIRECT_SCRIPT_URI}?id=$userDetails[0]&conf=$randVar" | 
+     mutt -s 'Mekong Registration' -- "$email"`;
     
     close(USER);
 }
 
 sub signup_form {
-    (my $template_variables, my $error) = @_;
+    (my $template_variables, my $message) = @_;
     
-    if ($error) {
-        $$template_variables{ERROR} = $last_error;
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;
     }
 
     return "signup_form";
@@ -447,7 +569,7 @@ sub check_user {
     (my $template_variables) = @_;
 
     if ($loggedIn) {
-        $last_error = "Already logged in.";
+        $last_message = "Already logged in.";
         return search_form($template_variables, 1);
     }
 
@@ -461,7 +583,7 @@ sub check_user {
     } elsif (not authenticate($username, $password)) {
         return login_form($template_variables, 1);
     } elsif (not confirmed($username, -1)) {
-        $last_error = "Please confirm your email.";
+        $last_message = "Please confirm your email.";
         return login_form($template_variables, 1);
     } else {
         my $cookie = CGI::Cookie->new(-name=>'ID', -value=>"$username:$password");
@@ -473,9 +595,9 @@ sub check_user {
 
 # simple search form
 sub search_form {
-    (my $template_variables, my $error) = @_;
-    if ($error) {
-        $$template_variables{ERROR} = $last_error;
+    (my $template_variables, my $message) = @_;
+    if ($message) {
+        $$template_variables{ERROR} = $last_message;
     }
 
     return "search_form";
@@ -589,15 +711,15 @@ eof
 
 sub legal_login {
     my ($login) = @_;
-    our ($last_error);
+    our ($last_message);
 
     if ($login !~ /^[a-zA-Z][a-zA-Z0-9]*$/) {
-        $last_error = "Invalid login '$login': logins must start with a
+        $last_message = "Invalid login '$login': logins must start with a
                        letter and contain only letters and digits.";
         return 0;
     }
     if (length $login < 3 || length $login > 8) {
-        $last_error = "Invalid login: logins must be 3-8 characters long.";
+        $last_message = "Invalid login: logins must be 3-8 characters long.";
         return 0;
     }
     return 1;
@@ -607,15 +729,15 @@ sub legal_login {
 
 sub legal_password {
     my ($password) = @_;
-    our ($last_error);
+    our ($last_message);
     
     if ($password =~ /\s/) {
-        $last_error = "Invalid password: password can not contain white space.";
+        $last_message = "Invalid password: password can not contain white space.";
         return 0;
     }
 
     if (length $password < 5) {
-        $last_error = "Invalid password: passwords must contain at least 5
+        $last_message = "Invalid password: passwords must contain at least 5
                        characters.";
         return 0;
     }
@@ -628,10 +750,10 @@ sub legal_password {
 
 sub legal_isbn {
     my ($isbn) = @_;
-    our ($last_error);
+    our ($last_message);
     
     return 1 if $isbn =~ /^\d{9}(\d|X)$/;
-    $last_error = "Invalid isbn '$isbn' : an isbn must be exactly 10 digits.";
+    $last_message = "Invalid isbn '$isbn' : an isbn must be exactly 10 digits.";
     return 0;
 }
 
@@ -640,10 +762,10 @@ sub legal_isbn {
 
 sub legal_credit_card_number {
     my ($number) = @_;
-    our ($last_error);
+    our ($last_message);
     
     return 1 if $number =~ /^\d{16}$/;
-    $last_error = "Invalid credit card number - must be 16 digits.\n";
+    $last_message = "Invalid credit card number - must be 16 digits.\n";
     return 0;
 }
 
@@ -651,10 +773,10 @@ sub legal_credit_card_number {
 
 sub legal_expiry_date {
     my ($expiry_date) = @_;
-    our ($last_error);
+    our ($last_message);
     
     return 1 if $expiry_date =~ /^\d\d\/\d\d$/;
-    $last_error = "Invalid expiry date - must be mm/yy, e.g. 11/04.\n";
+    $last_message = "Invalid expiry date - must be mm/yy, e.g. 11/04.\n";
     return 0;
 }
 
@@ -681,11 +803,11 @@ sub total_books {
 
 sub authenticate {
     my ($login, $password) = @_;
-    our (%user_details, $last_error);
+    our (%user_details, $last_message);
     
     return 0 if !legal_login($login);
     if (not -e "$users_dir/$login") {
-        $last_error = "User '$login' does not exist.";
+        $last_message = "User '$login' does not exist.";
         return 0;
     }
 
@@ -698,12 +820,12 @@ sub authenticate {
     close(USER);
     foreach my $field (qw(name street city state postcode password)) {
         if (!defined $details{$field}) {
-            $last_error = "Incomplete user file: field $field missing";
+            $last_message = "Incomplete user file: field $field missing";
             return 0;
         }
     }
     if ($details{"password"} ne $password) {
-        $last_error = "Incorrect password.";
+        $last_message = "Incorrect password.";
         return 0;
      }
      %user_details = %details;
@@ -808,8 +930,8 @@ book=$book_details{$isbn}{$search_type}\n" if $debug;
                 $match = $field !~ /$term/i;
             };
             if ($@) {
-                $last_error = $@;
-                $last_error =~ s/;.*//;
+                $last_message = $@;
+                $last_message =~ s/;.*//;
                 return (); 
             }
             next BOOK if $match;
@@ -961,7 +1083,7 @@ checkout orders quit);
     
     print "mekong.com.au - ASCII interface\n";
     while (1) {
-        $last_error = "";
+        $last_message = "";
         print "> ";
         my $line = <STDIN> || last;
         $line =~ s/^\s*>\s*//;
@@ -1027,7 +1149,7 @@ eq "") ||
 sub login_command {
     my ($login) = @_;
     if (!legal_login($login)) {
-        print "$last_error\n";
+        print "$last_message\n";
         return "";
     }
     if (!-r "$users_dir/$login") {
@@ -1038,7 +1160,7 @@ sub login_command {
     my $pass = <STDIN>;
     chomp $pass;
     if (!authenticate($login, $pass)) {
-        print "$last_error\n";
+        print "$last_message\n";
         return "";
     }
     $login = $login;
@@ -1049,7 +1171,7 @@ sub login_command {
 sub new_account_command {
     my ($login) = @_;
     if (!legal_login($login)) {
-        print "$last_error\n";
+        print "$last_message\n";
         return "";
     }
     if (-r "$users_dir/$login") {
@@ -1070,7 +1192,7 @@ sub new_account_command {
             exit 1 if !$value;
             chomp $value;
             if ($name eq "password" && !legal_password($value)) {
-                print "$last_error\n";
+                print "$last_message\n";
                 next;
             }
             last if $value =~ /\S+/;
@@ -1093,8 +1215,8 @@ sub search_command {
 sub search_command1 {
     my (@search_terms) = @_;
     my @matching_isbns = search_books1(@search_terms);
-    if ($last_error) {
-        print "$last_error\n";
+    if ($last_message) {
+        print "$last_message\n";
     } elsif (@matching_isbns) {
         print_books(@matching_isbns);
     } else {
@@ -1106,7 +1228,7 @@ sub details_command {
     my ($isbn) = @_;
     our %book_details;
     if (!legal_isbn($isbn)) {
-        print "$last_error\n";
+        print "$last_message\n";
         return;
     }
     if (!$book_details{$isbn}) {
@@ -1144,7 +1266,7 @@ sub add_command {
     my ($login,$isbn) = @_;
     our %book_details;
     if (!legal_isbn($isbn)) {
-        print "$last_error\n";
+        print "$last_message\n";
         return;
     }
     if (!$book_details{$isbn}) {
@@ -1158,7 +1280,7 @@ sub drop_command {
     my ($login,$isbn) = @_;
     my @basket_isbns = read_basket($login);
     if (!legal_isbn($argument)) {
-        print "$last_error\n";
+        print "$last_message\n";
         return;
     }
     if (!grep(/^$isbn$/, @basket_isbns)) {
@@ -1190,7 +1312,7 @@ $user_details{postcode}\n\n";
             next if !$credit_card_number;
             last if $credit_card_number =~ /^\d{16}$/;
             last if legal_credit_card_number($credit_card_number);
-            print "$last_error\n";
+            print "$last_message\n";
     }
     while (1) {
             print "Expiry date (mm/yy): ";
@@ -1199,7 +1321,7 @@ $user_details{postcode}\n\n";
             $expiry_date =~ s/\s//g;
             next if !$expiry_date;
             last if legal_expiry_date($expiry_date);
-            print "$last_error\n";
+            print "$last_message\n";
     }
     finalize_order($login, $credit_card_number, $expiry_date);
 }
@@ -1248,7 +1370,7 @@ sub set_global_variables {
     $orders_dir = "$base_dir/orders";
     $baskets_dir = "$base_dir/baskets";
     $users_dir = "$base_dir/users";
-    $last_error = "";
+    $last_message = "";
     %user_details = ();
     %book_details = ();
     %attribute_names = ();
