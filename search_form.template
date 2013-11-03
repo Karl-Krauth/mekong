@@ -12,4 +12,16 @@
 </div><!-- /.row -->
 </form>
 
+<table class = "table">
+    <tr>
+        <th>Image</th>
+        <th>Description</th>
+        <th>Price</th>
+        <th>Actions</th>
+    </tr>
+    <form accept-charset="UTF-8" action="" method="post">
+        <input type="hidden" name="searchres" value=<TMPL_VAR NAME=SEARCH_TERMS>>
+        <TMPL_VAR NAME=TABLE_ROWS>
+    </form>
+</table>
 

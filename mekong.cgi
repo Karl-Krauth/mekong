@@ -1,4 +1,4 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 # written by andrewt@cse.unsw.edu.au October 2013
 # as a starting point for COMP2041 assignment 2
 # http://www.cse.unsw.edu.au/~cs2041/assignments/mekong/
@@ -68,8 +68,8 @@ sub cgi_main {
         $loggedIn = 1;
         my @arr = split(/:/, $cookies{ID}->value);
         $id = shift(@arr);
-        initFiles();
     }
+    initFiles();
 
     if (not defined $action) {
         if ($loggedIn) {
@@ -330,7 +330,7 @@ sub checkout_page {
         <form accept-charset="UTF-8"
         class="form-horizontal" action="" method="post">
 eof
-        $newRow = makeRow($isbn);
+        $newRow .= makeRow($isbn);
         $newRow .= <<eof;
         <td><input type="number" name="num" value="$num">
         <button class="btn-default btn-block" type="submit" 
@@ -357,12 +357,38 @@ eof
     return "checkout_page";
 }
 
-# simple search form
+# simple search form with randomly generated books
 sub search_form {
     (my $template_variables, my $message) = @_;
     if ($message) {
         $$template_variables{ERROR} = $last_message;
     }
+
+    if (not $book_read) {
+        read_books($books_file);
+    }
+
+    my @table_rows;
+    my @isbns;
+    my @keys = keys %book_details;
+    for my $i (1 .. 5) {
+        my $temp = 
+        push(@isbns, $keys[rand(@keys)]);
+    }
+    foreach my $isbn (@isbns) {
+        my $newRow = makeRow($isbn);
+        $newRow .= <<eof;
+        <td><button class="btn-default btn-block" type="submit" 
+        name="action" value="add_home $isbn">Add</button><br>
+        <button class="btn-default btn-block" type="submit" name="action" 
+        value="details $isbn">Details</button><br></td>
+    </tr>
+eof
+        push(@table_rows, $newRow);
+    }
+
+    $$template_variables{TABLE_ROWS} = "@table_rows";
+
 
     return "search_form";
 }
@@ -377,32 +403,36 @@ sub initFiles {
         mkdir($baskets_dir);
     }
 
-    if (! -d $users_dir) {
-        mkdir($users_dir);
-    }
-
     if (! -d $orders_dir) {
         mkdir($orders_dir);
     }
 
-    if (! -e "$orders_dir/$id") {
-        open(USER, ">", "$orders_dir/$id");
-        print(USER "");
-        close(USER);
+    if (! -d $users_dir) {
+        mkdir($users_dir);
     }
 
-    if (! -e "$users_dir/$id") {
-        open(USER, ">", "$users_dir/$id");
-        print(USER "0");
-        close(USER);
 
+    if ($loggedIn) {
+        if (! -e "$orders_dir/$id") {
+            open(USER, ">", "$orders_dir/$id");
+            print(USER "");
+            close(USER);
+        }
+ 
+        if (! -e "$users_dir/$id") {
+            open(USER, ">", "$users_dir/$id");
+            print(USER "0");
+            close(USER);
+
+        }
+
+        if (! -e "$baskets_dir/$id") {
+            open(USER, ">", "$baskets_dir/$id");
+            print(USER "");
+            close(USER);
+        } 
     }
 
-    if (! -e "$baskets_dir/$id") {
-        open(USER, ">", "$baskets_dir/$id");
-        print(USER "");
-        close(USER);
-    } 
 }
 
 #Finalizes the checkour order and redirects to the appropriate page.
@@ -633,6 +663,10 @@ sub add_book {
         inc_basket($id, $isbn, 1);
         $last_message = "Item successfully added to Basket.";
         return search_results($template_variables, 1);    
+    } elsif ($prevPage eq "home") {
+        $last_message = "Item successfully added to Basket.";
+        inc_basket($id, $isbn, 1);
+        return search_form($template_variables, 1);
     } elsif ($prevPage eq "details") {
         inc_basket($id, $isbn, 1);
         $last_message = "Item added successfully to Basket.";
